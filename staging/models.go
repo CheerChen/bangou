@@ -6,11 +6,14 @@ import (
 )
 
 type StagingFile struct {
-	Path     string
-	Filename string
-	Size     int64
-	Ready    bool
-	Media    *scanner.MediaInfo
+	Path         string
+	Filename     string
+	Size         int64
+	Ready        bool
+	Media        *scanner.MediaInfo
+	DownloadPct    int    // 0-100, from aria2
+	DownloadSize   int64  // bytes completed
+	DownloadStatus string // "active", "waiting", "paused", "complete", "removed", "error", ""
 }
 
 type ParsedFile struct {

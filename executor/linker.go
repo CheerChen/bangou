@@ -7,20 +7,19 @@ import (
 	"path/filepath"
 )
 
-// LinkFile creates a link from srcPath to outputDir/number/name.ext.
+// LinkFile creates a link from srcPath into outDir.
 // When multiPart is true, the filename includes a -cd{part} suffix (e.g. SIVR-476-cd1.mp4).
-func LinkFile(srcPath, outputDir, number, linkType string, multiPart bool, part int) (string, error) {
+func LinkFile(srcPath, outDir, number, linkType string, multiPart bool, part int) (string, error) {
 	ext := filepath.Ext(srcPath)
-	dir := filepath.Join(outputDir, number)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", fmt.Errorf("mkdir %s: %w", dir, err)
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		return "", fmt.Errorf("mkdir %s: %w", outDir, err)
 	}
 
 	name := number
 	if multiPart {
 		name = fmt.Sprintf("%s-cd%d", number, part)
 	}
-	linkPath := filepath.Join(dir, name+ext)
+	linkPath := filepath.Join(outDir, name+ext)
 	_ = os.Remove(linkPath)
 
 	switch linkType {

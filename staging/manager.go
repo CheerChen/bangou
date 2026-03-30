@@ -26,9 +26,6 @@ func New() *Manager {
 }
 
 func (m *Manager) Ingest(f StagingFile) {
-	if !f.Ready {
-		return
-	}
 	parsed := parser.Parse(f.Filename)
 	trigger := ""
 
@@ -261,6 +258,55 @@ func (m *Manager) SetTaskProgress(number string, percent int) {
 	defer m.mu.Unlock()
 	if g, ok := m.groups[number]; ok {
 		g.TaskProgress = percent
+	}
+}
+
+// SetDownloadProgress updates download progress for a file matched by filename.
+func (m *Manager) SetDownloadProgress(filename string, pct int, completed int64, status string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for _, u := range m.unknowns {
+		if u.Filename == filename {
+			u.DownloadPct = pct
+			u.DownloadSize = completed
+			u.DownloadStatus = status
+			return
+		}
+	}
+	for _, g := range m.groups {
+		for i := range g.Items {
+			if g.Items[i].File.Filename == filename {
+				g.Items[i].File.DownloadPct = pct
+				g.Items[i].File.DownloadSize = completed
+				g.Items[i].File.DownloadStatus = status
+				return
+			}
+		}
+	}
+}
+
+// ClearDownloadProgress resets download info for files not in the given filename set.
+func (m *Manager) ClearDownloadProgress(activeFilenames map[string]bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for _, u := range m.unknowns {
+		if u.DownloadStatus != "" && !activeFilenames[u.Filename] {
+			u.DownloadPct = 0
+			u.DownloadSize = 0
+			u.DownloadStatus = ""
+		}
+	}
+	for _, g := range m.groups {
+		for i := range g.Items {
+			f := &g.Items[i].File
+			if f.DownloadStatus != "" && !activeFilenames[f.Filename] {
+				f.DownloadPct = 0
+				f.DownloadSize = 0
+				f.DownloadStatus = ""
+			}
+		}
 	}
 }
 

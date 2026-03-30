@@ -20,21 +20,26 @@ type MergedPart struct {
 }
 
 type Metadata struct {
-	ID        int64
-	Number    string
-	Title     string
-	Plot      string
-	Director  string
-	Maker     string
-	Label     string
-	Series    string
-	Actors    string
-	Genres    string
-	CoverURL  string
-	Premiered string
-	Year      string
-	Runtime   string
-	Provider  string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID           int64
+	Number       string
+	Title        string
+	Plot         string
+	Director     string
+	Maker        string
+	Label        string
+	Series       string
+	Actors       string
+	Genres       string
+	CoverURL     string
+	SampleImages string // comma-separated URLs
+	Premiered    string
+	Year         string
+	Runtime      string
+	Rating       string
+	ReviewCount  int
+	PageURL      string
+	ContentID    string
+	Provider     string
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }

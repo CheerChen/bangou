@@ -14,20 +14,26 @@ import (
 )
 
 type MovieMetadata struct {
-	Number    string
-	Title     string
-	Plot      string
-	Director  string
-	Maker     string
-	Label     string
-	Series    string
-	Actors    []string
-	Genres    []string
-	CoverURL  string
-	Premiered string
-	Year      string
-	Runtime   string
-	Provider  string
+	Number       string
+	Title        string
+	Plot         string
+	Director     string
+	Maker        string
+	Label        string
+	Series       string
+	Actors       []string
+	Genres       []string
+	CoverURL     string
+	SampleImages []string // sample/preview image URLs
+	Premiered    string
+	Year         string
+	Runtime      string // minutes
+	Rating       string // e.g. "4.00"
+	ReviewCount  int
+	PageURL      string // source page URL
+	ContentID    string // provider internal ID
+	Provider     string
+	RawJSON      []byte `json:"-"` // original provider response for debugging
 }
 
 type Provider interface {

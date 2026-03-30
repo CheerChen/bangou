@@ -25,6 +25,40 @@ func New(store committed.Store, stg *staging.Manager, outputDir string) *Executo
 	return &Executor{store: store, staging: stg, outputDir: outputDir}
 }
 
+// ResolveLinkPath expands a pattern like "{Year}/{Actor}/{Number}" using metadata.
+// Only {Year}, {Actor}, {Number} are supported. {Number} is always appended if missing.
+func ResolveLinkPath(pattern, number string, meta *provider.MovieMetadata) string {
+	if strings.TrimSpace(pattern) == "" {
+		return number
+	}
+	year := "Unknown"
+	actor := "Unknown"
+	if meta != nil {
+		if meta.Year != "" {
+			year = meta.Year
+		}
+		if len(meta.Actors) > 0 && meta.Actors[0] != "" {
+			actor = meta.Actors[0]
+		}
+	}
+	r := strings.NewReplacer(
+		"{Year}", sanitizePath(year),
+		"{Actor}", sanitizePath(actor),
+		"{Number}", sanitizePath(number),
+	)
+	result := r.Replace(pattern)
+	// Ensure number is always the last segment
+	if !strings.HasSuffix(result, number) {
+		result = filepath.Join(result, number)
+	}
+	return filepath.Clean(result)
+}
+
+func sanitizePath(s string) string {
+	r := strings.NewReplacer("/", "_", "\\", "_", ":", "_", "*", "_", "?", "_", "\"", "_", "<", "_", ">", "_", "|", "_")
+	return r.Replace(strings.TrimSpace(s))
+}
+
 func (e *Executor) Link(ctx context.Context, number string, selectedPaths []string) error {
 	log.Printf("[link] %s: start, %d files selected", number, len(selectedPaths))
 	group := e.staging.GetGroup(number)
@@ -37,7 +71,10 @@ func (e *Executor) Link(ctx context.Context, number string, selectedPaths []stri
 		return fmt.Errorf("no matching files for %s", number)
 	}
 
-	outDir := filepath.Join(e.outputDir, number)
+	// Resolve link path pattern
+	pattern, _ := e.store.GetSetting(ctx, "link_path_pattern")
+	relPath := ResolveLinkPath(pattern, number, group.Scrape.Meta)
+	outDir := filepath.Join(e.outputDir, relPath)
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return fmt.Errorf("mkdir %s: %w", outDir, err)
 	}
@@ -49,7 +86,7 @@ func (e *Executor) Link(ctx context.Context, number string, selectedPaths []stri
 	for i, item := range selected {
 		part := i + 1
 		log.Printf("[link] %s: linking part %d: %s", number, part, item.File.Filename)
-		linkPath, err := LinkFile(item.File.Path, e.outputDir, number, linkType, multiPart, part)
+		linkPath, err := LinkFile(item.File.Path, outDir, number, linkType, multiPart, part)
 		if err != nil {
 			return fmt.Errorf("link part %d: %w", part, err)
 		}
@@ -102,6 +139,34 @@ func (e *Executor) Merge(ctx context.Context, number string, selectedPaths []str
 	return nil
 }
 
+// Unlink removes link files, nfo, cover, and raw from the output directory (keeps the directory).
+// Deletes DB output and metadata records.
+func (e *Executor) Unlink(ctx context.Context, number string, outputID int64) error {
+	log.Printf("[unlink] %s: start", number)
+
+	outDir := filepath.Join(e.outputDir, number)
+	entries, err := os.ReadDir(outDir)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("read dir: %w", err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		path := filepath.Join(outDir, entry.Name())
+		log.Printf("[unlink] %s: removing %s", number, entry.Name())
+		if err := os.Remove(path); err != nil {
+			log.Printf("[unlink] %s: warn: %v", number, err)
+		}
+	}
+
+	if err := e.store.DeleteOutput(ctx, outputID); err != nil {
+		return fmt.Errorf("delete output: %w", err)
+	}
+	log.Printf("[unlink] %s: done", number)
+	return nil
+}
+
 func (e *Executor) writeMetadata(ctx context.Context, number, outDir string, meta *provider.MovieMetadata) {
 	if meta == nil {
 		return
@@ -111,24 +176,39 @@ func (e *Executor) writeMetadata(ctx context.Context, number, outDir string, met
 		log.Printf("warn: write nfo %s: %v", number, err)
 	}
 	_ = provider.DownloadCover(ctx, meta.CoverURL, outDir, number)
+
+	// Write raw provider response for debugging
+	if len(meta.RawJSON) > 0 {
+		rawPath := filepath.Join(outDir, number+"-raw."+meta.Provider)
+		if err := os.WriteFile(rawPath, meta.RawJSON, 0o644); err != nil {
+			log.Printf("warn: write raw %s: %v", number, err)
+		} else {
+			log.Printf("[link] %s: raw response saved to %s", number, rawPath)
+		}
+	}
 }
 
 func (e *Executor) commitMetadata(ctx context.Context, number string, meta *provider.MovieMetadata) {
 	_ = e.store.UpsertMetadata(ctx, &committed.Metadata{
-		Number:    number,
-		Title:     meta.Title,
-		Plot:      meta.Plot,
-		Director:  meta.Director,
-		Maker:     meta.Maker,
-		Label:     meta.Label,
-		Series:    meta.Series,
-		Actors:    strings.Join(meta.Actors, ","),
-		Genres:    strings.Join(meta.Genres, ","),
-		CoverURL:  meta.CoverURL,
-		Premiered: meta.Premiered,
-		Year:      meta.Year,
-		Runtime:   meta.Runtime,
-		Provider:  meta.Provider,
+		Number:       number,
+		Title:        meta.Title,
+		Plot:         meta.Plot,
+		Director:     meta.Director,
+		Maker:        meta.Maker,
+		Label:        meta.Label,
+		Series:       meta.Series,
+		Actors:       strings.Join(meta.Actors, ","),
+		Genres:       strings.Join(meta.Genres, ","),
+		CoverURL:     meta.CoverURL,
+		SampleImages: strings.Join(meta.SampleImages, ","),
+		Premiered:    meta.Premiered,
+		Year:         meta.Year,
+		Runtime:      meta.Runtime,
+		Rating:       meta.Rating,
+		ReviewCount:  meta.ReviewCount,
+		PageURL:      meta.PageURL,
+		ContentID:    meta.ContentID,
+		Provider:     meta.Provider,
 	})
 }
 

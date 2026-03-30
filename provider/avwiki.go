@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -28,14 +29,15 @@ func (a *AVWiki) Name() string { return "avwiki" }
 
 func (a *AVWiki) Scrape(ctx context.Context, number string) (*MovieMetadata, error) {
 	direct := fmt.Sprintf(avwikiDirectURL, strings.ToLower(number))
-	if doc, err := a.fetchDoc(ctx, direct); err == nil {
+	if doc, raw, err := a.fetchDoc(ctx, direct); err == nil {
 		if meta := a.parseDetail(doc, number); meta != nil {
+			meta.RawJSON = raw
 			return meta, nil
 		}
 	}
 
 	search := fmt.Sprintf(avwikiSearchURL, url.QueryEscape(number))
-	doc, err := a.fetchDoc(ctx, search)
+	doc, _, err := a.fetchDoc(ctx, search)
 	if err != nil {
 		return nil, fmt.Errorf("avwiki search failed: %w", err)
 	}
@@ -43,7 +45,7 @@ func (a *AVWiki) Scrape(ctx context.Context, number string) (*MovieMetadata, err
 	if detailURL == "" {
 		return nil, fmt.Errorf("avwiki no result for %s", number)
 	}
-	detailDoc, err := a.fetchDoc(ctx, detailURL)
+	detailDoc, raw, err := a.fetchDoc(ctx, detailURL)
 	if err != nil {
 		return nil, fmt.Errorf("avwiki detail failed: %w", err)
 	}
@@ -51,25 +53,34 @@ func (a *AVWiki) Scrape(ctx context.Context, number string) (*MovieMetadata, err
 	if meta == nil {
 		return nil, fmt.Errorf("avwiki parse failed for %s", number)
 	}
+	meta.RawJSON = raw
 	return meta, nil
 }
 
-func (a *AVWiki) fetchDoc(ctx context.Context, target string) (*goquery.Document, error) {
+func (a *AVWiki) fetchDoc(ctx context.Context, target string) (*goquery.Document, []byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	req.Header.Set("User-Agent", "Mozilla/5.0")
 
 	resp, err := a.client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("http %d", resp.StatusCode)
+		return nil, nil, fmt.Errorf("http %d", resp.StatusCode)
 	}
-	return goquery.NewDocumentFromReader(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, nil, err
+	}
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(string(body)))
+	if err != nil {
+		return nil, body, err
+	}
+	return doc, body, nil
 }
 
 func (a *AVWiki) findFirstResult(doc *goquery.Document) string {
