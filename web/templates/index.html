@@ -1,0 +1,75 @@
+{{define "content"}}
+{{template "dashboard-content" .}}
+{{end}}
+
+{{define "dashboard-content"}}
+<div id="dashboard-content" hx-get="/partials/dashboard" hx-trigger="every 3s, refresh" hx-swap="outerHTML">
+    <div class="card">
+        <div class="row">
+            <div class="status-bar">
+                <span><span class="status-dot dot-ok"></span>Input: <code>{{.InputDir}}</code></span>
+                {{if .Aria2Enabled}}
+                <span>
+                    {{if .Aria2Connected}}<span class="status-dot dot-ok"></span>aria2: connected
+                    {{else}}<span class="status-dot dot-warn"></span>aria2: disconnected{{end}}
+                </span>
+                {{else}}
+                <span><span class="status-dot dot-off"></span>aria2: not configured</span>
+                {{end}}
+            </div>
+            <button class="btn btn-primary" hx-post="/api/scan" hx-swap="none" hx-on::after-request="htmx.trigger('#dashboard-content','refresh')">Rescan</button>
+        </div>
+    </div>
+
+    <h2>Unknown ({{len .Unknown}})</h2>
+    {{if gt (len .Unknown) 0}}
+    {{range .Unknown}}
+    <div class="card" id="unknown-{{.DOMID}}">
+        <div class="row">
+            <span class="number">???</span>
+            <span class="parts">{{.Filename}}</span>
+        </div>
+        <div class="parts">No parse result yet.</div>
+        <form class="actions" hx-post="/api/files/tag" hx-target="#unknown-{{.DOMID}}" hx-swap="outerHTML">
+            <input type="hidden" name="path" value="{{.Path}}">
+            <input type="text" name="number" placeholder="e.g. SIVR-476">
+            <button class="btn btn-primary" type="submit">Set</button>
+        </form>
+        <form class="actions" hx-post="/api/files/ignore" hx-target="#unknown-{{.DOMID}}" hx-swap="outerHTML">
+            <input type="hidden" name="path" value="{{.Path}}">
+            <button class="btn btn-ignore" type="submit">Ignore</button>
+        </form>
+    </div>
+    {{end}}
+    {{else}}
+    <div class="card"><div class="parts">No unknown files.</div></div>
+    {{end}}
+
+    <h2>Pending ({{len .Pending}})</h2>
+    {{if gt (len .Pending) 0}}
+    {{range .Pending}}
+    {{template "group-card" .}}
+    {{end}}
+    {{else}}
+    <div class="card"><div class="parts">No pending groups.</div></div>
+    {{end}}
+
+    <h2>In Library ({{len .Library}})</h2>
+    {{if gt (len .Library) 0}}
+    {{range .Library}}
+    <div class="card" id="output-{{.ID}}">
+        <div class="row">
+            <div>
+                <span class="number">{{.Number}}</span>
+                {{if .Alive}}<span class="status status-done">alive</span>{{else}}<span class="status status-error">missing</span>{{end}}
+            </div>
+            <button class="btn btn-ignore" hx-delete="/api/outputs/{{.ID}}" hx-target="#output-{{.ID}}" hx-swap="outerHTML" hx-confirm="Delete this library entry?">Remove</button>
+        </div>
+        <div class="parts">{{.LinkType}} -> <code>{{.LinkPath}}</code></div>
+    </div>
+    {{end}}
+    {{else}}
+    <div class="card"><div class="parts">No committed outputs yet.</div></div>
+    {{end}}
+</div>
+{{end}}

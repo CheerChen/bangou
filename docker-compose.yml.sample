@@ -1,0 +1,37 @@
+services:
+  bangou:
+    image: ${IMAGE:-192.168.0.110:5000/bangou:latest}
+    container_name: bangou
+    ports:
+      - "8890:8080"
+    volumes:
+      - /mnt/hd1/Download/VR:/mnt/hd1/Download/VR:rw
+      - /mnt/hd1/Multimedia/VR:/mnt/hd1/Multimedia/VR:rw
+      - /opt/bangou:/data
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Asia/Tokyo
+      - BANGOU_INPUT_DIR=/mnt/hd1/Download/VR
+      - BANGOU_OUTPUT_DIR=/mnt/hd1/Multimedia/VR
+      - BANGOU_ARIA2_RPC_URL=${BANGOU_ARIA2_RPC_URL:-}
+      - BANGOU_ARIA2_TOKEN=${BANGOU_ARIA2_TOKEN:-}
+    command:
+      - --db=/data/bangou.db
+      - --listen=:8080
+    restart: unless-stopped
+
+# Optional reference block: standalone mkvtoolnix container.
+# Not needed when bangou image already includes mkvmerge.
+#
+# services:
+#   mkvtoolnix:
+#     restart: always
+#     image: jlesage/mkvtoolnix
+#     container_name: mkvtoolnix
+#     ports:
+#       - "5800:5800"
+#     volumes:
+#       - /opt/mkvtoolnix:/config:rw
+#       - /opt/Download:/storage:rw
+#       - /mnt:/mnt:rw

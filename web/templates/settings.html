@@ -1,0 +1,39 @@
+{{define "content"}}
+<div class="card">
+    <form method="post" action="/api/settings">
+        <label>Input Directory</label>
+        <input type="text" name="input_dir" value="{{index . "input_dir"}}">
+
+        <label>Output Directory</label>
+        <input type="text" name="output_dir" value="{{index . "output_dir"}}">
+
+        <label>aria2 RPC URL (optional)</label>
+        <input type="text" name="aria2_rpc_url" value="{{index . "aria2_rpc_url"}}">
+
+        <label>aria2 Token (optional)</label>
+        <input type="password" name="aria2_token" value="{{index . "aria2_token"}}">
+
+        <label>Provider Order (comma separated)</label>
+        <input type="text" name="provider_order" value="{{index . "provider_order"}}" placeholder="avwiki,dmm">
+
+        <div class="parts" style="margin-top:8px;">
+            <label><input type="checkbox" name="provider_enabled_avwiki" {{if ne (index . "provider_enabled_avwiki") "false"}}checked{{end}}> Enable AVWiki</label>
+            <label><input type="checkbox" name="provider_enabled_dmm" {{if ne (index . "provider_enabled_dmm") "false"}}checked{{end}}> Enable DMM</label>
+        </div>
+
+        <label>DMM API ID</label>
+        <input type="text" name="dmm_api_id" value="{{index . "dmm_api_id"}}">
+
+        <label>DMM Affiliate ID</label>
+        <input type="text" name="dmm_affiliate_id" value="{{index . "dmm_affiliate_id"}}">
+
+        <div class="parts" style="margin-top:10px;">
+            mkvmerge: {{if index . "mkvmerge_available"}}✓ {{index . "mkvmerge_path"}}{{else}}not found{{end}}
+        </div>
+
+        <div class="actions">
+            <button class="btn btn-primary" type="submit">Save</button>
+        </div>
+    </form>
+</div>
+{{end}}
