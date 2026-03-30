@@ -13,17 +13,27 @@ import (
 	"time"
 )
 
+// DownloadProgress represents a single aria2 download's progress.
+type DownloadProgress struct {
+	Path      string // file path
+	Completed int64  // bytes downloaded
+	Total     int64  // total bytes
+	Pct       int    // 0-100
+	Status    string // "active", "waiting", "paused", "complete", "removed", "error"
+}
+
 // Aria2Client polls aria2 RPC for active downloads and triggers a scan when a download completes.
 type Aria2Client struct {
-	rpcURL string
-	token  string
-	onDone func() // called when a download completes
+	rpcURL     string
+	token      string
+	onDone     func()                       // called when a download completes
+	onProgress func(progress []DownloadProgress) // called each poll with active download progress
 
 	connected atomic.Bool
 	id        int64
 }
 
-func NewAria2Client(rpcURL, token string, onDone func()) *Aria2Client {
+func NewAria2Client(rpcURL, token string, onDone func(), onProgress func([]DownloadProgress)) *Aria2Client {
 	// aria2 JSON-RPC over HTTP and WebSocket share the same endpoint.
 	// Normalize ws:// → http://, wss:// → https:// so net/http works.
 	if strings.HasPrefix(rpcURL, "ws://") {
@@ -32,9 +42,10 @@ func NewAria2Client(rpcURL, token string, onDone func()) *Aria2Client {
 		rpcURL = "https://" + strings.TrimPrefix(rpcURL, "wss://")
 	}
 	return &Aria2Client{
-		rpcURL: rpcURL,
-		token:  token,
-		onDone: onDone,
+		rpcURL:     rpcURL,
+		token:      token,
+		onDone:     onDone,
+		onProgress: onProgress,
 	}
 }
 
@@ -77,11 +88,20 @@ func (c *Aria2Client) Run(ctx context.Context) {
 			if !c.connected.Load() {
 				continue
 			}
-			active, err := c.countActive(ctx)
+			downloads, err := c.fetchActive(ctx)
 			if err != nil {
 				log.Printf("aria2: poll error: %v", err)
 				c.connected.Store(false)
 				continue
+			}
+			active := 0
+			for _, d := range downloads {
+				if d.Status == "active" || d.Status == "waiting" {
+					active++
+				}
+			}
+			if c.onProgress != nil {
+				c.onProgress(downloads)
 			}
 			if firstPoll {
 				lastActive = active
@@ -179,24 +199,88 @@ func (c *Aria2Client) ping(ctx context.Context) error {
 	return nil
 }
 
-func (c *Aria2Client) countActive(ctx context.Context) (int, error) {
-	activeResult, err := c.call(ctx, "aria2.tellActive", []string{"gid"})
+type aria2Task struct {
+	Status          string `json:"status"` // active, waiting, paused, complete, removed, error
+	CompletedLength string `json:"completedLength"`
+	TotalLength     string `json:"totalLength"`
+	Files           []struct {
+		Path string `json:"path"`
+	} `json:"files"`
+}
+
+func (c *Aria2Client) fetchActive(ctx context.Context) ([]DownloadProgress, error) {
+	fields := []string{"status", "completedLength", "totalLength", "files"}
+
+	activeResult, err := c.call(ctx, "aria2.tellActive", fields)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	var active []json.RawMessage
-	if err := json.Unmarshal(activeResult, &active); err != nil {
-		return 0, err
+	var tasks []aria2Task
+	if err := json.Unmarshal(activeResult, &tasks); err != nil {
+		return nil, err
 	}
 
-	waitingResult, err := c.call(ctx, "aria2.tellWaiting", 0, 1000, []string{"gid"})
-	if err != nil {
-		return len(active), nil // waiting query failed, just return active count
-	}
-	var waiting []json.RawMessage
-	if err := json.Unmarshal(waitingResult, &waiting); err != nil {
-		return len(active), nil
+	// Waiting tasks
+	waitingResult, err := c.call(ctx, "aria2.tellWaiting", 0, 1000, fields)
+	if err == nil {
+		var waiting []aria2Task
+		if json.Unmarshal(waitingResult, &waiting) == nil {
+			tasks = append(tasks, waiting...)
+		}
 	}
 
-	return len(active) + len(waiting), nil
+	var out []DownloadProgress
+	for _, t := range tasks {
+		completed := parseInt64(t.CompletedLength)
+		total := parseInt64(t.TotalLength)
+		pct := 0
+		if total > 0 {
+			pct = int(completed * 100 / total)
+		}
+		status := t.Status
+		if status == "" {
+			status = "active"
+		}
+		for _, f := range t.Files {
+			if f.Path != "" {
+				out = append(out, DownloadProgress{
+					Path:      f.Path,
+					Completed: completed,
+					Total:     total,
+					Pct:       pct,
+					Status:    status,
+				})
+			}
+		}
+	}
+	return out, nil
+}
+
+// TestAria2Connection tests aria2 RPC with given URL and token, returns version or error.
+func TestAria2Connection(url, token string) (string, error) {
+	c := &Aria2Client{rpcURL: url, token: token}
+	if strings.HasPrefix(c.rpcURL, "ws://") {
+		c.rpcURL = "http://" + strings.TrimPrefix(c.rpcURL, "ws://")
+	} else if strings.HasPrefix(c.rpcURL, "wss://") {
+		c.rpcURL = "https://" + strings.TrimPrefix(c.rpcURL, "wss://")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	result, err := c.call(ctx, "aria2.getVersion")
+	if err != nil {
+		return "", err
+	}
+	var ver struct {
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal(result, &ver); err != nil {
+		return "", err
+	}
+	return ver.Version, nil
+}
+
+func parseInt64(s string) int64 {
+	var n int64
+	fmt.Sscanf(s, "%d", &n)
+	return n
 }

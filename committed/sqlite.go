@@ -36,6 +36,22 @@ func NewSQLite(dsn string) (*SQLiteStore, error) {
 		db.Close()
 		return nil, err
 	}
+	// v2 migration: add new metadata columns
+	newCols := []struct{ name, def string }{
+		{"sample_images", "TEXT NOT NULL DEFAULT ''"},
+		{"rating", "TEXT NOT NULL DEFAULT ''"},
+		{"review_count", "INTEGER NOT NULL DEFAULT 0"},
+		{"page_url", "TEXT NOT NULL DEFAULT ''"},
+		{"content_id", "TEXT NOT NULL DEFAULT ''"},
+	}
+	for _, col := range newCols {
+		if ok, _ := hasColumn(db, "metadata", col.name); !ok {
+			if _, err := db.Exec(fmt.Sprintf("ALTER TABLE metadata ADD COLUMN %s %s", col.name, col.def)); err != nil {
+				db.Close()
+				return nil, fmt.Errorf("migrate metadata.%s: %w", col.name, err)
+			}
+		}
+	}
 	return &SQLiteStore{db: db}, nil
 }
 
@@ -184,25 +200,21 @@ func (s *SQLiteStore) GetMergedParts(ctx context.Context, number string) ([]Merg
 func (s *SQLiteStore) UpsertMetadata(ctx context.Context, m *Metadata) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO metadata (number, title, plot, director, maker, label, series,
-		                       actors, genres, cover_url, premiered, year, runtime, provider, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		                       actors, genres, cover_url, sample_images, premiered, year, runtime,
+		                       rating, review_count, page_url, content_id, provider, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(number) DO UPDATE SET
-		   title=excluded.title,
-		   plot=excluded.plot,
-		   director=excluded.director,
-		   maker=excluded.maker,
-		   label=excluded.label,
-		   series=excluded.series,
-		   actors=excluded.actors,
-		   genres=excluded.genres,
-		   cover_url=excluded.cover_url,
-		   premiered=excluded.premiered,
-		   year=excluded.year,
-		   runtime=excluded.runtime,
-		   provider=excluded.provider,
+		   title=excluded.title, plot=excluded.plot, director=excluded.director,
+		   maker=excluded.maker, label=excluded.label, series=excluded.series,
+		   actors=excluded.actors, genres=excluded.genres, cover_url=excluded.cover_url,
+		   sample_images=excluded.sample_images, premiered=excluded.premiered,
+		   year=excluded.year, runtime=excluded.runtime, rating=excluded.rating,
+		   review_count=excluded.review_count, page_url=excluded.page_url,
+		   content_id=excluded.content_id, provider=excluded.provider,
 		   updated_at=excluded.updated_at`,
 		m.Number, m.Title, m.Plot, m.Director, m.Maker, m.Label, m.Series,
-		m.Actors, m.Genres, m.CoverURL, m.Premiered, m.Year, m.Runtime, m.Provider, time.Now(),
+		m.Actors, m.Genres, m.CoverURL, m.SampleImages, m.Premiered, m.Year, m.Runtime,
+		m.Rating, m.ReviewCount, m.PageURL, m.ContentID, m.Provider, time.Now(),
 	)
 	return err
 }
@@ -211,12 +223,14 @@ func (s *SQLiteStore) GetMetadata(ctx context.Context, number string) (*Metadata
 	m := &Metadata{}
 	err := s.db.QueryRowContext(ctx,
 		`SELECT id, number, title, plot, director, maker, label, series,
-		        actors, genres, cover_url, premiered, year, runtime, provider,
+		        actors, genres, cover_url, sample_images, premiered, year, runtime,
+		        rating, review_count, page_url, content_id, provider,
 				created_at, updated_at
 		 FROM metadata WHERE number = ?`,
 		number,
 	).Scan(&m.ID, &m.Number, &m.Title, &m.Plot, &m.Director, &m.Maker, &m.Label, &m.Series,
-		&m.Actors, &m.Genres, &m.CoverURL, &m.Premiered, &m.Year, &m.Runtime, &m.Provider,
+		&m.Actors, &m.Genres, &m.CoverURL, &m.SampleImages, &m.Premiered, &m.Year, &m.Runtime,
+		&m.Rating, &m.ReviewCount, &m.PageURL, &m.ContentID, &m.Provider,
 		&m.CreatedAt, &m.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -306,6 +320,7 @@ func ensureCompatibleSchema(db *sql.DB) error {
 	if _, err := db.Exec(`DROP TABLE IF EXISTS groups`); err != nil {
 		return err
 	}
+
 	return nil
 }
 

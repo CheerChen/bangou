@@ -18,7 +18,7 @@ func TestDMMToMetadata(t *testing.T) {
 	m := p.toMetadata("ACHJ-057", &dmmItem{
 		Title:   "Title/Invalid",
 		Date:    "2025-01-15 10:00:00",
-		Runtime: "120",
+		Volume: "120",
 		ImageURL: dmmImageURL{
 			Large: "https://img.example.com/l.jpg",
 		},

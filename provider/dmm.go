@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -79,13 +80,18 @@ func (d *DMM) searchOnce(ctx context.Context, keyword string) (*dmmItem, error) 
 		return nil, fmt.Errorf("http %d", resp.StatusCode)
 	}
 
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
 	var result dmmResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, err
 	}
 	if result.Result.Status != 200 || len(result.Result.Items) == 0 {
 		return nil, nil
 	}
+	result.Result.Items[0].rawBody = body
 	return &result.Result.Items[0], nil
 }
 
@@ -98,7 +104,11 @@ func (d *DMM) toMetadata(number string, item *dmmItem) *MovieMetadata {
 			m.Year = m.Premiered[:4]
 		}
 	}
-	m.Runtime = item.Runtime
+	m.Runtime = item.Volume // "86" = 86 minutes
+	m.ContentID = item.ContentID
+	m.PageURL = item.URL
+	m.Rating = item.Review.Average
+	m.ReviewCount = item.Review.Count
 
 	for _, a := range item.ItemInfo.Actress {
 		if a.Name != "" {
@@ -127,6 +137,13 @@ func (d *DMM) toMetadata(number string, item *dmmItem) *MovieMetadata {
 	} else {
 		m.CoverURL = item.ImageURL.Small
 	}
+	// Prefer large sample images, fallback to small
+	if len(item.SampleImageURL.SampleL.Image) > 0 {
+		m.SampleImages = item.SampleImageURL.SampleL.Image
+	} else if len(item.SampleImageURL.SampleS.Image) > 0 {
+		m.SampleImages = item.SampleImageURL.SampleS.Image
+	}
+	m.RawJSON = item.rawBody
 	return m
 }
 
@@ -140,11 +157,30 @@ type dmmResult struct {
 }
 
 type dmmItem struct {
-	Title    string      `json:"title"`
-	Date     string      `json:"date"`
-	Runtime  string      `json:"runtime"`
-	ImageURL dmmImageURL `json:"imageURL"`
-	ItemInfo dmmItemInfo `json:"iteminfo"`
+	ContentID      string            `json:"content_id"`
+	Title          string            `json:"title"`
+	Date           string            `json:"date"`
+	Volume         string            `json:"volume"` // runtime in minutes
+	URL            string            `json:"URL"`
+	Review         dmmReview         `json:"review"`
+	ImageURL       dmmImageURL       `json:"imageURL"`
+	SampleImageURL dmmSampleImageURL `json:"sampleImageURL"`
+	ItemInfo       dmmItemInfo       `json:"iteminfo"`
+	rawBody        []byte
+}
+
+type dmmReview struct {
+	Count   int    `json:"count"`
+	Average string `json:"average"`
+}
+
+type dmmSampleImageURL struct {
+	SampleS struct {
+		Image []string `json:"image"`
+	} `json:"sample_s"`
+	SampleL struct {
+		Image []string `json:"image"`
+	} `json:"sample_l"`
 }
 
 type dmmImageURL struct {

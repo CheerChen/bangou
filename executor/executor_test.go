@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/CheerChen/bangou/provider"
 )
 
 func TestLinkFile(t *testing.T) {
@@ -15,12 +17,13 @@ func TestLinkFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	linkPath, err := LinkFile(srcPath, outDir, "ACHJ-057", "hardlink", false, 0)
+	targetDir := filepath.Join(outDir, "ACHJ-057")
+	linkPath, err := LinkFile(srcPath, targetDir, "ACHJ-057", "hardlink", false, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	expected := filepath.Join(outDir, "ACHJ-057", "ACHJ-057.mp4")
+	expected := filepath.Join(targetDir, "ACHJ-057.mp4")
 	if linkPath != expected {
 		t.Fatalf("linkPath = %q, want %q", linkPath, expected)
 	}
@@ -31,6 +34,35 @@ func TestLinkFile(t *testing.T) {
 	}
 	if string(data) != "video data" {
 		t.Fatal("link content mismatch")
+	}
+}
+
+func TestResolveLinkPath(t *testing.T) {
+	meta := &provider.MovieMetadata{
+		Year:   "2026",
+		Actors: []string{"村上悠華"},
+	}
+	tests := []struct {
+		pattern string
+		want    string
+	}{
+		{"", "SIVR-476"},
+		{"{Number}", "SIVR-476"},
+		{"{Year}/{Number}", "2026/SIVR-476"},
+		{"{Year}/{Actor}/{Number}", "2026/村上悠華/SIVR-476"},
+		{"{Year}/{Actor}", "2026/村上悠華/SIVR-476"}, // Number auto-appended
+	}
+	for _, tc := range tests {
+		got := ResolveLinkPath(tc.pattern, "SIVR-476", meta)
+		if got != tc.want {
+			t.Errorf("ResolveLinkPath(%q) = %q, want %q", tc.pattern, got, tc.want)
+		}
+	}
+
+	// nil meta → fallback to "Unknown"
+	got := ResolveLinkPath("{Year}/{Actor}/{Number}", "SIVR-476", nil)
+	if got != "Unknown/Unknown/SIVR-476" {
+		t.Errorf("nil meta: got %q", got)
 	}
 }
 

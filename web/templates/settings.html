@@ -1,39 +1,145 @@
 {{define "content"}}
-<div class="card">
-    <form method="post" action="/api/settings">
-        <label>Input Directory</label>
-        <input type="text" name="input_dir" value="{{index . "input_dir"}}">
+<script>window.location.href = '/';</script>
+{{end}}
 
-        <label>Output Directory</label>
-        <input type="text" name="output_dir" value="{{index . "output_dir"}}">
+{{define "settings-modal"}}
+<dialog id="settings-dialog" open>
+    <article style="max-width:860px; width:90vw; margin:auto;">
+        <header>
+            <button aria-label="Close" rel="prev" onclick="this.closest('dialog').close();this.closest('dialog').remove();"></button>
+            <h3 style="margin:0;">Settings</h3>
+        </header>
 
-        <label>aria2 RPC URL (optional)</label>
-        <input type="text" name="aria2_rpc_url" value="{{index . "aria2_rpc_url"}}">
+        <form id="settings-form" hx-post="/api/settings" hx-swap="none"
+              hx-on::after-request="if(event.detail.elt===this && event.detail.successful){document.getElementById('settings-dialog').close();document.getElementById('settings-dialog').remove();htmx.trigger('#dashboard-content','refresh')}">
 
-        <label>aria2 Token (optional)</label>
-        <input type="password" name="aria2_token" value="{{index . "aria2_token"}}">
+            {{/* Paths (read-only) */}}
+            <fieldset>
+                <legend>Paths</legend>
+                <div class="grid">
+                    <label>Input Directory
+                        <input type="text" value="{{index .Settings "input_dir"}}" readonly disabled>
+                    </label>
+                    <label>Output Directory
+                        <input type="text" value="{{index .Settings "output_dir"}}" readonly disabled>
+                    </label>
+                </div>
+            </fieldset>
 
-        <label>Provider Order (comma separated)</label>
-        <input type="text" name="provider_order" value="{{index . "provider_order"}}" placeholder="avwiki,dmm">
+            {{/* Link Path Pattern */}}
+            <fieldset>
+                <legend>Link Path Pattern</legend>
+                <div style="font-size:0.8rem; color:var(--muted, #94a3b8); margin-bottom:0.5rem;">
+                    Relative to Output Directory. Variables: <code>{Year}</code> <code>{Actor}</code> <code>{Number}</code> (required, always last segment)
+                </div>
+                <label>Pattern
+                    <input type="text" name="link_path_pattern" id="link-pattern-input"
+                           value="{{index .Settings "link_path_pattern"}}"
+                           placeholder="{Number}"
+                           oninput="updatePatternPreview()">
+                </label>
+                <div style="font-size:0.8rem; margin-top:0.25rem;">
+                    <span style="color:var(--muted, #94a3b8);">Preview: </span>
+                    <code id="link-pattern-preview" style="color:#6ee7b7;"></code>
+                </div>
+            </fieldset>
 
-        <div class="parts" style="margin-top:8px;">
-            <label><input type="checkbox" name="provider_enabled_avwiki" {{if ne (index . "provider_enabled_avwiki") "false"}}checked{{end}}> Enable AVWiki</label>
-            <label><input type="checkbox" name="provider_enabled_dmm" {{if ne (index . "provider_enabled_dmm") "false"}}checked{{end}}> Enable DMM</label>
-        </div>
+            {{/* aria2 */}}
+            <fieldset>
+                <legend>aria2 RPC</legend>
+                <div class="grid">
+                    <label>RPC URL
+                        <input type="text" name="aria2_rpc_url" value="{{index .Settings "aria2_rpc_url"}}" placeholder="ws://192.168.0.110:6800/jsonrpc">
+                    </label>
+                    <label>Token
+                        <div style="display:flex; gap:0.5rem; align-items:center;">
+                            <input type="password" name="aria2_token" value="{{index .Settings "aria2_token"}}" style="flex:1; margin:0;">
+                            <button type="button" onclick="togglePassword(this)" style="padding:0.4rem 0.6rem; margin:0; font-size:1rem; line-height:1;">👁</button>
+                        </div>
+                    </label>
+                </div>
+                <div style="display:flex; gap:0.5rem; align-items:center; margin-top:0.25rem;">
+                    <button type="button" class="outline" style="padding:0.3rem 0.75rem; font-size:0.8rem; margin:0;"
+                            hx-post="/api/test/aria2" hx-include="[name=aria2_rpc_url],[name=aria2_token]"
+                            hx-target="#aria2-test-result" hx-swap="innerHTML">Test</button>
+                    <span id="aria2-test-result" style="font-size:0.8rem;"></span>
+                </div>
+            </fieldset>
 
-        <label>DMM API ID</label>
-        <input type="text" name="dmm_api_id" value="{{index . "dmm_api_id"}}">
+            {{/* Providers */}}
+            <fieldset>
+                <legend>Providers (drag to reorder)</legend>
+                <div id="provider-list" style="display:flex; flex-direction:column; gap:0.5rem;">
+                    {{range .Providers}}
+                    <div class="provider-item" data-id="{{.ID}}" style="display:flex; align-items:center; padding:0.5rem 0.75rem; background:var(--surface-2, #334155); border-radius:0.5rem;">
+                        <span class="drag-handle" style="cursor:grab; margin-right:0.75rem; color:var(--muted, #94a3b8); font-size:1.1rem;">&#9776;</span>
+                        <label style="display:inline-flex; align-items:center; gap:0.5rem; margin:0; flex:1; cursor:pointer;">
+                            <input type="checkbox" name="provider_enabled_{{.ID}}" {{if .Enabled}}checked{{end}} style="margin:0;">
+                            <strong>{{.Name}}</strong>
+                        </label>
+                    </div>
+                    {{end}}
+                </div>
+                <input type="hidden" name="provider_order" id="provider-order-input" value="{{index .Settings "provider_order"}}">
+            </fieldset>
 
-        <label>DMM Affiliate ID</label>
-        <input type="text" name="dmm_affiliate_id" value="{{index . "dmm_affiliate_id"}}">
+            {{/* DMM Credentials */}}
+            <fieldset>
+                <legend>DMM API</legend>
+                <div class="grid">
+                    <label>API ID
+                        <input type="text" name="dmm_api_id" value="{{index .Settings "dmm_api_id"}}">
+                    </label>
+                    <label>Affiliate ID
+                        <input type="text" name="dmm_affiliate_id" value="{{index .Settings "dmm_affiliate_id"}}">
+                    </label>
+                </div>
+                <div style="display:flex; gap:0.5rem; align-items:center; margin-top:0.25rem;">
+                    <button type="button" class="outline" style="padding:0.3rem 0.75rem; font-size:0.8rem; margin:0;"
+                            hx-post="/api/test/dmm" hx-include="[name=dmm_api_id],[name=dmm_affiliate_id]"
+                            hx-target="#dmm-test-result" hx-swap="innerHTML">Test</button>
+                    <span id="dmm-test-result" style="font-size:0.8rem;"></span>
+                </div>
+            </fieldset>
 
-        <div class="parts" style="margin-top:10px;">
-            mkvmerge: {{if index . "mkvmerge_available"}}✓ {{index . "mkvmerge_path"}}{{else}}not found{{end}}
-        </div>
+            <footer style="display:flex; justify-content:flex-end; gap:0.5rem; margin-top:1rem; padding:0;">
+                <button type="button" class="secondary" onclick="document.getElementById('settings-dialog').close();document.getElementById('settings-dialog').remove();">Cancel</button>
+                <button type="submit">Save</button>
+            </footer>
+        </form>
+    </article>
 
-        <div class="actions">
-            <button class="btn btn-primary" type="submit">Save</button>
-        </div>
-    </form>
-</div>
+    <script>
+        (function() {
+            var list = document.getElementById('provider-list');
+            if (list && typeof Sortable !== 'undefined') {
+                Sortable.create(list, {
+                    handle: '.drag-handle',
+                    animation: 150,
+                    onEnd: function() {
+                        var order = Array.from(list.querySelectorAll('.provider-item'))
+                            .map(function(el) { return el.dataset.id; }).join(',');
+                        document.getElementById('provider-order-input').value = order;
+                    }
+                });
+            }
+            updatePatternPreview();
+        })();
+
+        function updatePatternPreview() {
+            var input = document.getElementById('link-pattern-input');
+            var preview = document.getElementById('link-pattern-preview');
+            if (!input || !preview) return;
+            var pattern = input.value.trim() || '{Number}';
+            var result = pattern
+                .replace(/\{Year\}/g, '2026')
+                .replace(/\{Actor\}/g, '\u6751\u4e0a\u60a0\u83ef')
+                .replace(/\{Number\}/g, 'SIVR-476');
+            if (result.indexOf('SIVR-476') === -1) {
+                result = result + '/SIVR-476';
+            }
+            preview.textContent = result;
+        }
+    </script>
+</dialog>
 {{end}}

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -148,7 +149,15 @@ func main() {
 	aria2Token := config.ResolveSetting(settings["aria2_token"], config.EnvAria2Token, "")
 	var aria2 *scanner.Aria2Client
 	if aria2URL != "" {
-		aria2 = scanner.NewAria2Client(aria2URL, aria2Token, scanNow)
+		aria2 = scanner.NewAria2Client(aria2URL, aria2Token, scanNow, func(downloads []scanner.DownloadProgress) {
+			activeFilenames := make(map[string]bool, len(downloads))
+			for _, d := range downloads {
+				fn := filepath.Base(d.Path)
+				activeFilenames[fn] = true
+				mgr.SetDownloadProgress(fn, d.Pct, d.Completed, d.Status)
+			}
+			mgr.ClearDownloadProgress(activeFilenames)
+		})
 		go aria2.Run(ctx)
 	} else {
 		log.Printf("aria2: not configured, skipping")
@@ -156,11 +165,22 @@ func main() {
 
 	go checker.Run(ctx, db, time.Hour)
 
+	libScrapeFn := func(number string) (*provider.MovieMetadata, map[string]string) {
+		scrapeCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+		defer cancel()
+		providers := buildProviders(scrapeCtx, db)
+		if len(providers) == 0 {
+			return nil, map[string]string{"system": "no provider configured"}
+		}
+		result := provider.Chain(scrapeCtx, providers, number)
+		return result.Meta, result.Errors
+	}
+
 	var aria2Status web.Aria2Status
 	if aria2 != nil {
 		aria2Status = aria2
 	}
-	srv := web.NewServer(mgr, db, exec, scanNow, rescrapeNow, aria2Status)
+	srv := web.NewServer(mgr, db, exec, scanNow, rescrapeNow, libScrapeFn, aria2Status)
 	go func() {
 		log.Printf("web ui: http://%s", cfg.ListenAddr)
 		if err := http.ListenAndServe(cfg.ListenAddr, srv); err != nil {
@@ -178,20 +198,25 @@ func processScrapeJob(ctx context.Context, db committed.Store, mgr *staging.Mana
 			if meta, _ := db.GetMetadata(ctx, number); meta != nil {
 				mgr.SetScrapeResult(number, staging.ScrapeResult{
 					Meta: &provider.MovieMetadata{
-						Number:    meta.Number,
-						Title:     meta.Title,
-						Plot:      meta.Plot,
-						Director:  meta.Director,
-						Maker:     meta.Maker,
-						Label:     meta.Label,
-						Series:    meta.Series,
-						Actors:    splitCSV(meta.Actors),
-						Genres:    splitCSV(meta.Genres),
-						CoverURL:  meta.CoverURL,
-						Premiered: meta.Premiered,
-						Year:      meta.Year,
-						Runtime:   meta.Runtime,
-						Provider:  meta.Provider,
+						Number:       meta.Number,
+						Title:        meta.Title,
+						Plot:         meta.Plot,
+						Director:     meta.Director,
+						Maker:        meta.Maker,
+						Label:        meta.Label,
+						Series:       meta.Series,
+						Actors:       splitCSV(meta.Actors),
+						Genres:       splitCSV(meta.Genres),
+						CoverURL:     meta.CoverURL,
+						SampleImages: splitCSV(meta.SampleImages),
+						Premiered:    meta.Premiered,
+						Year:         meta.Year,
+						Runtime:      meta.Runtime,
+						Rating:       meta.Rating,
+						ReviewCount:  meta.ReviewCount,
+						PageURL:      meta.PageURL,
+						ContentID:    meta.ContentID,
+						Provider:     meta.Provider,
 					},
 					Errors: map[string]string{},
 					Status: "success",
