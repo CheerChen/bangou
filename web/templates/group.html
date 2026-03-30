@@ -1,0 +1,74 @@
+{{define "group-card"}}
+<div class="card" id="group-{{.DOMID}}">
+    {{/* Row 1: Number + tags + task/scrape status */}}
+    <div class="row">
+        <div>
+            <span class="number">{{.Number}}</span>
+            {{if .TagText}}<span class="tag">{{.TagText}}</span>{{end}}
+            {{if .SourceText}}<span class="tag">{{.SourceText}}</span>{{end}}
+        </div>
+        <div>
+            {{if eq .Task "merging"}}<span class="status status-merging">merging{{if gt .TaskProgress 0}} {{.TaskProgress}}%{{end}}</span>
+            {{else if eq .Task "linking"}}<span class="status status-merging">linking...</span>
+            {{else if eq .Task "error"}}<span class="status status-error">task failed</span>
+            {{else}}
+                {{if eq .Scrape.Status "success"}}<span class="status status-done">scraped{{if .Scrape.Meta}} via {{.Scrape.Meta.Provider}}{{end}}</span>{{end}}
+                {{if eq .Scrape.Status "scraping"}}<span class="status status-merging">scraping...</span>{{end}}
+                {{if eq .Scrape.Status "failed"}}<span class="status status-error">scrape failed</span>{{end}}
+            {{end}}
+        </div>
+    </div>
+
+    {{/* Task error message */}}
+    {{if and (eq .Task "error") .TaskErr}}
+    <div class="parts" style="color:#fca5a5;">{{.TaskErr}}</div>
+    {{end}}
+
+    {{/* Row 2: Metadata (only when scraped) */}}
+    {{if eq .Scrape.Status "success"}}
+    {{if .MetaTitle}}<div class="meta-title">{{.MetaTitle}}</div>{{end}}
+    <dl class="meta-grid">
+        {{if .MetaLine}}<dt>Info</dt><dd>{{.MetaLine}}</dd>{{end}}
+        {{if .MetaActors}}<dt>Actors</dt><dd>{{.MetaActors}}</dd>{{end}}
+    </dl>
+    {{if and .Scrape.Meta .Scrape.Meta.CoverURL}}<img src="{{.Scrape.Meta.CoverURL}}" style="max-width:200px; margin-top:8px; border-radius:6px;">{{end}}
+    {{end}}
+
+    {{if eq .Scrape.Status "failed"}}
+    <div class="parts" style="color:#fca5a5;">{{if .ErrorText}}{{.ErrorText}}{{else}}Unknown error{{end}}</div>
+    {{end}}
+
+    {{/* Row 3: File list with checkboxes + actions (wrapped in form) */}}
+    <form id="form-{{.DOMID}}">
+        <div class="file-list">
+            {{range .Items}}
+            <label class="file-item">
+                <input type="checkbox" name="paths" value="{{.Path}}" checked>
+                <span class="file-name">{{if .Ready}}&#10003;{{else}}&#9203;{{end}} Part {{.Part}}: {{.Filename}}</span>
+                <span class="file-tags">{{if .Resolution}}<span class="tag">{{.Resolution}}</span>{{end}}{{if .VideoCodec}}<span class="tag">{{.VideoCodec}}</span>{{end}}{{if .AudioCodec}}<span class="tag">{{.AudioCodec}}</span>{{end}}{{if .Bitrate}}<span class="tag">{{.Bitrate}}</span>{{end}}{{if .Duration}}<span class="tag">{{.Duration}}</span>{{end}}</span>
+                <span class="file-size">{{printf "%.2f" .SizeGB}} GB</span>
+            </label>
+            {{end}}
+        </div>
+
+        {{/* Row 4: Summary + Actions */}}
+        <div class="row" style="margin-top:10px;">
+            <span class="parts" style="margin:0;">{{.ParsedCount}} files, {{printf "%.2f" .TotalSizeGB}} GB</span>
+            <div class="actions" style="margin:0;">
+                {{if or (eq .Task "merging") (eq .Task "linking")}}
+                {{/* Task in progress - no actions */}}
+                {{else}}
+                    {{if eq .Scrape.Status "failed"}}
+                    <button type="button" class="btn btn-primary" hx-post="/api/groups/{{.Number}}/rescrape" hx-target="#group-{{.DOMID}}" hx-swap="outerHTML">Retry</button>
+                    {{end}}
+                    {{if gt (len .Items) 1}}
+                    <button type="button" class="btn btn-merge" hx-post="/api/groups/{{.Number}}/action" hx-include="#form-{{.DOMID}}" hx-vals='{"action":"merge"}' hx-target="#group-{{.DOMID}}" hx-swap="outerHTML">Merge</button>
+                    {{end}}
+                    <button type="button" class="btn btn-primary" hx-post="/api/groups/{{.Number}}/action" hx-include="#form-{{.DOMID}}" hx-vals='{"action":"link"}' hx-target="#group-{{.DOMID}}" hx-swap="outerHTML">Link</button>
+                    <button type="button" class="btn btn-ignore" hx-post="/api/groups/{{.Number}}/action" hx-vals='{"action":"ignore"}' hx-target="#group-{{.DOMID}}" hx-swap="outerHTML">Ignore</button>
+                {{end}}
+            </div>
+        </div>
+    </form>
+</div>
+{{end}}

@@ -1,0 +1,84 @@
+{{define "layout"}}
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Bangou</title>
+    <script src="/static/htmx.min.js"></script>
+    <style>
+        :root {
+            --bg: #0f172a;
+            --panel: #111827;
+            --panel-2: #1f2937;
+            --text: #e5e7eb;
+            --muted: #9ca3af;
+            --ok: #10b981;
+            --warn: #f59e0b;
+            --danger: #ef4444;
+            --accent: #0ea5e9;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            min-height: 100vh;
+            color: var(--text);
+            background: radial-gradient(circle at top right, #1d4ed8 0%, #0f172a 40%, #020617 100%);
+            font-family: "Avenir Next", "Helvetica Neue", sans-serif;
+            padding: 20px;
+        }
+        h1 { margin: 0 0 16px 0; }
+        h2 { color: var(--muted); font-size: 14px; letter-spacing: 0.08em; text-transform: uppercase; margin: 20px 0 8px; }
+        .topbar { display: flex; gap: 8px; align-items: center; margin-bottom: 16px; }
+        .topbar a { color: var(--text); text-decoration: none; padding: 8px 12px; background: color-mix(in oklab, var(--panel) 85%, black); border-radius: 8px; }
+        .card { background: color-mix(in oklab, var(--panel) 80%, black); border: 1px solid #1f2937; border-radius: 10px; padding: 14px; margin-bottom: 10px; }
+        .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+        .number { font-size: 18px; font-weight: 600; }
+        .parts { margin-top: 10px; color: var(--muted); font-size: 14px; line-height: 1.5; }
+        .file-row { padding: 8px 0; border-bottom: 1px dashed #334155; }
+        .file-row:last-child { border-bottom: none; }
+        .parse-row { color: #93c5fd; font-size: 12px; margin-top: 2px; word-break: break-word; }
+        .actions { display: flex; gap: 8px; margin-top: 10px; }
+        .btn { border: none; border-radius: 8px; padding: 8px 12px; cursor: pointer; color: white; }
+        .btn-primary { background: var(--accent); }
+        .btn-merge { background: #0284c7; }
+        .btn-ignore { background: #4b5563; }
+        .btn-danger { background: var(--danger); }
+        .tag { display: inline-block; font-size: 12px; padding: 2px 8px; border-radius: 999px; background: var(--panel-2); color: var(--muted); margin-left: 6px; }
+        .status { font-size: 12px; padding: 2px 8px; border-radius: 999px; }
+        .status-done { background: color-mix(in oklab, var(--ok) 20%, black); color: #a7f3d0; }
+        .status-merging { background: #1e3a8a; color: #bfdbfe; }
+        .status-ignored { background: #374151; color: #d1d5db; }
+        .status-error { background: color-mix(in oklab, var(--danger) 20%, black); color: #fecaca; }
+        input[type=text], input[type=password] { width: 100%; padding: 8px; border-radius: 8px; border: 1px solid #374151; background: #030712; color: white; }
+        label { color: var(--muted); font-size: 13px; display: block; margin: 8px 0 4px; }
+        code { color: #bfdbfe; }
+        .status-bar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+        .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; }
+        .dot-ok { background: var(--ok); }
+        .dot-warn { background: var(--warn); }
+        .dot-off { background: #4b5563; }
+        .meta-grid { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; font-size: 14px; margin-top: 6px; }
+        .meta-grid dt { color: var(--muted); }
+        .meta-grid dd { margin: 0; }
+        .meta-title { font-size: 14px; line-height: 1.5; margin-top: 6px; color: var(--text); }
+        .file-list { margin-top: 8px; }
+        .file-item { display: flex; align-items: center; padding: 6px 0; border-bottom: 1px solid #1f2937; font-size: 13px; cursor: pointer; gap: 8px; }
+        .file-item input[type=checkbox] { accent-color: var(--accent); flex-shrink: 0; }
+        .file-item:last-child { border-bottom: none; }
+        .file-name { color: var(--muted); word-break: break-all; flex: 1; }
+        .file-tags { display: flex; gap: 4px; flex-shrink: 0; }
+        .file-tags .tag { font-size: 11px; padding: 1px 6px; }
+        .file-size { color: var(--text); white-space: nowrap; margin-left: 8px; flex-shrink: 0; }
+    </style>
+</head>
+<body>
+    <h1>Bangou</h1>
+    <div class="topbar">
+        <a href="/">Dashboard</a>
+        <a href="/settings">Settings</a>
+    </div>
+    {{template "content" .}}
+</body>
+</html>
+{{end}}
