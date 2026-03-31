@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -27,7 +28,8 @@ func NewAVWiki() *AVWiki {
 
 func (a *AVWiki) Name() string { return "avwiki" }
 
-func (a *AVWiki) Scrape(ctx context.Context, number string) (*MovieMetadata, error) {
+func (a *AVWiki) Scrape(ctx context.Context, p Predict) (*MovieMetadata, error) {
+	number := p.Number
 	direct := fmt.Sprintf(avwikiDirectURL, strings.ToLower(number))
 	if doc, raw, err := a.fetchDoc(ctx, direct); err == nil {
 		if meta := a.parseDetail(doc, number); meta != nil {
@@ -58,6 +60,7 @@ func (a *AVWiki) Scrape(ctx context.Context, number string) (*MovieMetadata, err
 }
 
 func (a *AVWiki) fetchDoc(ctx context.Context, target string) (*goquery.Document, []byte, error) {
+	log.Printf("[avwiki] GET %s", target)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
 		return nil, nil, err
@@ -66,12 +69,15 @@ func (a *AVWiki) fetchDoc(ctx context.Context, target string) (*goquery.Document
 
 	resp, err := a.client.Do(req)
 	if err != nil {
+		log.Printf("[avwiki] GET %s -> error: %v", target, err)
 		return nil, nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		log.Printf("[avwiki] GET %s -> HTTP %d", target, resp.StatusCode)
 		return nil, nil, fmt.Errorf("http %d", resp.StatusCode)
 	}
+	log.Printf("[avwiki] GET %s -> HTTP %d", target, resp.StatusCode)
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, nil, err

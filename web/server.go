@@ -52,6 +52,8 @@ func NewServer(stg *staging.Manager, store committed.Store, exec *executor.Execu
 	mux.HandleFunc("GET /partials/dashboard", h.DashboardPartial)
 	mux.HandleFunc("GET /settings", h.Settings)
 	mux.HandleFunc("POST /api/settings", h.SaveSettings)
+	mux.HandleFunc("POST /api/groups/link-all", h.LinkAll)
+	mux.HandleFunc("GET /api/groups/link-all/progress", h.LinkAllProgress)
 	mux.HandleFunc("POST /api/groups/{number}/action", h.GroupAction)
 	mux.HandleFunc("POST /api/groups/{number}/rescrape", h.GroupRescrape)
 	mux.HandleFunc("POST /api/scan", h.TriggerScan)

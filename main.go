@@ -172,7 +172,7 @@ func main() {
 		if len(providers) == 0 {
 			return nil, map[string]string{"system": "no provider configured"}
 		}
-		result := provider.Chain(scrapeCtx, providers, number)
+		result := provider.Chain(scrapeCtx, providers, provider.Predict{Number: number})
 		return result.Meta, result.Errors
 	}
 
@@ -235,7 +235,8 @@ func processScrapeJob(ctx context.Context, db committed.Store, mgr *staging.Mana
 		mgr.SetScrapeResult(number, staging.ScrapeResult{Status: "failed", Errors: map[string]string{"system": "no provider configured"}})
 		return
 	}
-	result := provider.Chain(scrapeCtx, providers, number)
+	predict := provider.Predict{Number: number, RawNumber: mgr.GetRawNumber(number)}
+	result := provider.Chain(scrapeCtx, providers, predict)
 	if result.Meta != nil {
 		mgr.SetScrapeResult(number, staging.ScrapeResult{Meta: result.Meta, Errors: result.Errors, Status: "success"})
 		log.Printf("scrape success: %s -> %s (%s)", number, result.Meta.Title, result.Meta.Provider)

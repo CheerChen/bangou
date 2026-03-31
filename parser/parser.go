@@ -9,6 +9,7 @@ import (
 
 type ParsedFile struct {
 	Number     string
+	RawNumber  string
 	Part       int
 	Tags       []string
 	Ext        string
@@ -17,11 +18,13 @@ type ParsedFile struct {
 
 var (
 	sitePrefixRe = regexp.MustCompile(`^([a-zA-Z0-9.-]+)@`)
-	partRe       = regexp.MustCompile(`_(\d+)_`)
-	tagRe        = regexp.MustCompile(`(?i)(?:^|[_\-\s])(8k|4k|vr)(?:$|[_\-\s.])`)
-	mgstageRe    = regexp.MustCompile(`(?i)^(\d{3,4}[a-zA-Z]{2,6})-?(\d{3,4})\b`)
-	heyzoRe      = regexp.MustCompile(`(?i)^(heyzo)-?(\d{4})\b`)
-	standardRe   = regexp.MustCompile(`(?i)^([a-zA-Z]{2,5})-?(\d{3,6})\b`)
+	tokenizeRe   = regexp.MustCompile(`[^a-zA-Z0-9]+`)
+	partTokenRe  = regexp.MustCompile(`(?i)^part(\d+)$`)
+	tagTokenRe   = regexp.MustCompile(`(?i)^(8k|4k|vr)$`)
+
+	heyzoRe    = regexp.MustCompile(`(?i)^(heyzo)(\d{4})$`)
+	mgstageRe  = regexp.MustCompile(`(?i)^(\d{3,4}[a-zA-Z]{2,6})(\d{3,6})$`)
+	standardRe = regexp.MustCompile(`(?i)^\d*([a-zA-Z]{2,5})(\d{3,6})$`)
 )
 
 func Parse(filename string) ParsedFile {
@@ -30,37 +33,91 @@ func Parse(filename string) ParsedFile {
 
 	res := ParsedFile{Ext: ext}
 
+	// 1. Extract site prefix
 	if m := sitePrefixRe.FindStringSubmatch(name); len(m) > 1 {
 		res.SourceSite = strings.ToLower(m[1])
 		name = sitePrefixRe.ReplaceAllString(name, "")
 	}
 
-	if m := partRe.FindStringSubmatch(name); len(m) > 1 {
-		if p, err := strconv.Atoi(m[1]); err == nil {
-			res.Part = p
+	// 2. Tokenize by non-alphanumeric characters
+	tokens := tokenizeRe.Split(name, -1)
+	var clean []string
+	for _, t := range tokens {
+		if t != "" {
+			clean = append(clean, t)
 		}
-		name = partRe.ReplaceAllString(name, "_")
 	}
 
-	for _, m := range tagRe.FindAllStringSubmatch(name, -1) {
-		if len(m) > 1 {
-			res.Tags = append(res.Tags, strings.ToLower(m[1]))
+	if len(clean) == 0 {
+		return res
+	}
+
+	// 3. Build identifier from leading tokens
+	idStart := -1
+	for i, t := range clean {
+		if hasLetter(t) {
+			idStart = i
+			break
 		}
 	}
+	if idStart < 0 {
+		return res
+	}
+
+	raw := strings.ToLower(clean[idStart])
+	next := idStart + 1
+
+	// If identifier ends with a letter, append the next pure-digit token (number part)
+	if next < len(clean) && endsWithLetter(raw) && isPureDigits(clean[next]) && len(clean[next]) >= 3 {
+		raw += clean[next]
+		next++
+	}
+
+	// 4. Classify remaining tokens
+	for i := next; i < len(clean); i++ {
+		t := clean[i]
+
+		if m := partTokenRe.FindStringSubmatch(t); len(m) > 1 {
+			if res.Part == 0 {
+				if p, err := strconv.Atoi(m[1]); err == nil {
+					res.Part = p
+				}
+			}
+			continue
+		}
+
+		if tagTokenRe.MatchString(t) {
+			res.Tags = append(res.Tags, strings.ToLower(t))
+			continue
+		}
+
+		if isPureDigits(t) && len(t) <= 2 && res.Part == 0 {
+			if p, err := strconv.Atoi(t); err == nil {
+				res.Part = p
+			}
+			continue
+		}
+	}
+
 	res.Tags = unique(res.Tags)
-	res.Number = extractNumber(strings.ReplaceAll(name, "_", "-"))
+
+	// 5. Extract normalized number from raw identifier
+	res.Number = extractNumber(raw)
+	if res.Number != "" {
+		res.RawNumber = raw
+	}
 
 	return res
 }
 
-func extractNumber(name string) string {
-	if m := heyzoRe.FindStringSubmatch(name); len(m) > 2 {
+func extractNumber(raw string) string {
+	if m := heyzoRe.FindStringSubmatch(raw); len(m) > 2 {
 		return strings.ToUpper(m[1]) + "-" + m[2]
 	}
-	if m := mgstageRe.FindStringSubmatch(name); len(m) > 2 {
+	if m := mgstageRe.FindStringSubmatch(raw); len(m) > 2 {
 		return strings.ToUpper(m[1]) + "-" + trimLeadingZeros(m[2])
 	}
-	if m := standardRe.FindStringSubmatch(name); len(m) > 2 {
+	if m := standardRe.FindStringSubmatch(raw); len(m) > 2 {
 		return strings.ToUpper(m[1]) + "-" + trimLeadingZeros(m[2])
 	}
 	return ""
@@ -76,6 +133,35 @@ func trimLeadingZeros(s string) string {
 		out = "0" + out
 	}
 	return out
+}
+
+func hasLetter(s string) bool {
+	for _, c := range s {
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') {
+			return true
+		}
+	}
+	return false
+}
+
+func endsWithLetter(s string) bool {
+	if s == "" {
+		return false
+	}
+	c := s[len(s)-1]
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+}
+
+func isPureDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func unique(tags []string) []string {

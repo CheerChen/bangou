@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"mime"
 	"net/http"
 	"os"
@@ -36,9 +37,14 @@ type MovieMetadata struct {
 	RawJSON      []byte `json:"-"` // original provider response for debugging
 }
 
+type Predict struct {
+	Number    string
+	RawNumber string // original cleaned identifier, e.g. "13dsvr01801"
+}
+
 type Provider interface {
 	Name() string
-	Scrape(ctx context.Context, number string) (*MovieMetadata, error)
+	Scrape(ctx context.Context, p Predict) (*MovieMetadata, error)
 }
 
 type ScrapeResult struct {
@@ -46,20 +52,21 @@ type ScrapeResult struct {
 	Errors map[string]string
 }
 
-func Chain(ctx context.Context, providers []Provider, number string) *ScrapeResult {
+func Chain(ctx context.Context, providers []Provider, p Predict) *ScrapeResult {
+	log.Printf("[scrape] start number=%s raw=%s", p.Number, p.RawNumber)
 	out := &ScrapeResult{Errors: map[string]string{}}
-	for _, p := range providers {
-		meta, err := p.Scrape(ctx, number)
+	for _, prov := range providers {
+		meta, err := prov.Scrape(ctx, p)
 		if err != nil {
-			out.Errors[p.Name()] = err.Error()
+			out.Errors[prov.Name()] = err.Error()
 			continue
 		}
 		if meta != nil {
-			meta.Provider = p.Name()
+			meta.Provider = prov.Name()
 			out.Meta = meta
 			return out
 		}
-		out.Errors[p.Name()] = "not found"
+		out.Errors[prov.Name()] = "not found"
 	}
 	return out
 }
@@ -82,13 +89,16 @@ func DownloadCover(ctx context.Context, coverURL, outputDir, number string) stri
 	}
 	req.Header.Set("User-Agent", "bangou/1.0")
 
+	log.Printf("[cover] GET %s", coverURL)
 	resp, err := coverHTTPClient.Do(req)
 	if err != nil {
+		log.Printf("[cover] GET %s -> error: %v", coverURL, err)
 		return ""
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		log.Printf("[cover] GET %s -> HTTP %d", coverURL, resp.StatusCode)
 		return ""
 	}
 	if resp.ContentLength > 20<<20 {

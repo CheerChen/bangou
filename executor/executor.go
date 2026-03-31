@@ -86,14 +86,14 @@ func (e *Executor) Link(ctx context.Context, number string, selectedPaths []stri
 	for i, item := range selected {
 		part := i + 1
 		log.Printf("[link] %s: linking part %d: %s", number, part, item.File.Filename)
-		linkPath, err := LinkFile(item.File.Path, outDir, number, linkType, multiPart, part)
+		result, err := LinkFile(item.File.Path, outDir, number, linkType, multiPart, part)
 		if err != nil {
 			return fmt.Errorf("link part %d: %w", part, err)
 		}
-		if err := e.store.CreateOutput(ctx, &committed.Output{Number: number, LinkPath: linkPath, LinkType: linkType}); err != nil {
+		if err := e.store.CreateOutput(ctx, &committed.Output{Number: number, SrcPath: item.File.Path, LinkPath: result.LinkPath, LinkType: result.LinkType}); err != nil {
 			return fmt.Errorf("store output: %w", err)
 		}
-		log.Printf("[link] %s: part %d -> %s", number, part, linkPath)
+		log.Printf("[link] %s: part %d %s %s -> %s", number, part, result.LinkType, item.File.Path, result.LinkPath)
 	}
 
 	e.writeMetadata(ctx, number, outDir, group.Scrape.Meta)

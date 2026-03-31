@@ -18,17 +18,20 @@ func TestLinkFile(t *testing.T) {
 	}
 
 	targetDir := filepath.Join(outDir, "ACHJ-057")
-	linkPath, err := LinkFile(srcPath, targetDir, "ACHJ-057", "hardlink", false, 0)
+	result, err := LinkFile(srcPath, targetDir, "ACHJ-057", "hardlink", false, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	expected := filepath.Join(targetDir, "ACHJ-057.mp4")
-	if linkPath != expected {
-		t.Fatalf("linkPath = %q, want %q", linkPath, expected)
+	if result.LinkPath != expected {
+		t.Fatalf("linkPath = %q, want %q", result.LinkPath, expected)
+	}
+	if result.LinkType != "hardlink" {
+		t.Fatalf("linkType = %q, want %q", result.LinkType, "hardlink")
 	}
 
-	data, err := os.ReadFile(linkPath)
+	data, err := os.ReadFile(result.LinkPath)
 	if err != nil {
 		t.Fatal(err)
 	}

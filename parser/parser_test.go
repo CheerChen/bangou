@@ -11,27 +11,47 @@ func TestParse(t *testing.T) {
 		{
 			name:     "standard with site prefix and part",
 			filename: "twojav.com@sivr00476_3_8k.mp4",
-			want:     ParsedFile{Number: "SIVR-476", Part: 3, Tags: []string{"8k"}, Ext: ".mp4", SourceSite: "twojav.com"},
+			want:     ParsedFile{Number: "SIVR-476", RawNumber: "sivr00476", Part: 3, Tags: []string{"8k"}, Ext: ".mp4", SourceSite: "twojav.com"},
 		},
 		{
 			name:     "standard hyphenated",
 			filename: "ACHJ-057.mp4",
-			want:     ParsedFile{Number: "ACHJ-057", Part: 0, Ext: ".mp4"},
+			want:     ParsedFile{Number: "ACHJ-057", RawNumber: "achj057", Part: 0, Ext: ".mp4"},
 		},
 		{
 			name:     "no hyphen with leading zeros",
 			filename: "hmn690.mp4",
-			want:     ParsedFile{Number: "HMN-690", Part: 0, Ext: ".mp4"},
+			want:     ParsedFile{Number: "HMN-690", RawNumber: "hmn690", Part: 0, Ext: ".mp4"},
 		},
 		{
 			name:     "mgstage format",
 			filename: "300MAAN-783.mp4",
-			want:     ParsedFile{Number: "300MAAN-783", Part: 0, Ext: ".mp4"},
+			want:     ParsedFile{Number: "300MAAN-783", RawNumber: "300maan783", Part: 0, Ext: ".mp4"},
 		},
 		{
 			name:     "heyzo format",
 			filename: "HEYZO-3421.mp4",
-			want:     ParsedFile{Number: "HEYZO-3421", Part: 0, Ext: ".mp4"},
+			want:     ParsedFile{Number: "HEYZO-3421", RawNumber: "heyzo3421", Part: 0, Ext: ".mp4"},
+		},
+		{
+			name:     "numeric prefix label with part and tag",
+			filename: "4k2.com@13dsvr01801_2_8k.mp4",
+			want:     ParsedFile{Number: "DSVR-1801", RawNumber: "13dsvr01801", Part: 2, Tags: []string{"8k"}, Ext: ".mp4", SourceSite: "4k2.com"},
+		},
+		{
+			name:     "dotPartN suffix",
+			filename: "13dsvr01737.part2.mp4",
+			want:     ParsedFile{Number: "DSVR-1737", RawNumber: "13dsvr01737", Part: 2, Ext: ".mp4"},
+		},
+		{
+			name:     "trailing part without second underscore",
+			filename: "mdvr00336_2.mp4",
+			want:     ParsedFile{Number: "MDVR-336", RawNumber: "mdvr00336", Part: 2, Ext: ".mp4"},
+		},
+		{
+			name:     "dotPartN with site prefix",
+			filename: "4k2.com@hnvr00141.part3.mp4",
+			want:     ParsedFile{Number: "HNVR-141", RawNumber: "hnvr00141", Part: 3, Tags: nil, Ext: ".mp4", SourceSite: "4k2.com"},
 		},
 		{
 			name:     "unrecognizable",
@@ -45,6 +65,9 @@ func TestParse(t *testing.T) {
 			got := Parse(tt.filename)
 			if got.Number != tt.want.Number {
 				t.Errorf("Number = %q, want %q", got.Number, tt.want.Number)
+			}
+			if got.RawNumber != tt.want.RawNumber {
+				t.Errorf("RawNumber = %q, want %q", got.RawNumber, tt.want.RawNumber)
 			}
 			if got.Part != tt.want.Part {
 				t.Errorf("Part = %d, want %d", got.Part, tt.want.Part)

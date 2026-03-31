@@ -18,6 +18,7 @@ type StagingFile struct {
 
 type ParsedFile struct {
 	Number     string
+	RawNumber  string
 	Part       int
 	Tags       []string
 	SourceSite string
@@ -35,10 +36,11 @@ type ScrapeResult struct {
 }
 
 type StagingGroup struct {
-	Number   string
-	Items    []StagedItem
-	Scrape   ScrapeResult
-	Ignored  bool
+	Number    string
+	RawNumber string
+	Items     []StagedItem
+	Scrape    ScrapeResult
+	Ignored   bool
 	Task         string // "", "linking", "merging", "done", "error"
 	TaskErr      string
 	TaskProgress int // 0-100

@@ -5,6 +5,7 @@ import "time"
 type Output struct {
 	ID        int64
 	Number    string
+	SrcPath   string
 	LinkPath  string
 	LinkType  string
 	Alive     bool

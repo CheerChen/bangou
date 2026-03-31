@@ -36,6 +36,18 @@ type Handlers struct {
 	aria2          Aria2Status
 	// Library rescrape: pending new results awaiting user confirmation
 	libRescrape sync.Map // number -> *LibRescrapeResult
+
+	// Link All state
+	linkAllMu sync.Mutex
+	linkAll   *LinkAllStatus
+}
+
+type LinkAllStatus struct {
+	Total   int
+	Done    int
+	Current string
+	Errors  []string
+	Running bool
 }
 
 type LibRescrapeResult struct {
@@ -98,6 +110,7 @@ type UnknownView struct {
 type LibraryView struct {
 	ID              int64
 	Number          string
+	SrcPath         string
 	LinkPath        string
 	LinkType        string
 	Alive           bool
@@ -131,6 +144,7 @@ type DashboardData struct {
 	Pending        []GroupView
 	Unknown        []UnknownView
 	Library        []LibraryView
+	LinkableCount  int
 	InputDir       string
 	Aria2Connected bool
 	Aria2Enabled   bool
@@ -212,6 +226,121 @@ func (h *Handlers) GroupAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	renderPartial(w, "group-card", h.buildGroupView(*g))
+}
+
+func (h *Handlers) LinkAll(w http.ResponseWriter, r *http.Request) {
+	h.linkAllMu.Lock()
+	if h.linkAll != nil && h.linkAll.Running {
+		h.linkAllMu.Unlock()
+		h.renderLinkAllProgress(w)
+		return
+	}
+
+	// Collect eligible groups: scrape success, all ready, no active task
+	groups := h.staging.ListGroups()
+	var eligible []string
+	for _, g := range groups {
+		if g.Scrape.Status != "success" || g.Task != "" {
+			continue
+		}
+		allReady := true
+		for _, item := range g.Items {
+			if !item.File.Ready {
+				allReady = false
+				break
+			}
+		}
+		if allReady {
+			eligible = append(eligible, g.Number)
+		}
+	}
+
+	if len(eligible) == 0 {
+		h.linkAllMu.Unlock()
+		fmt.Fprint(w, `<span style="color:#fca5a5;">No eligible groups to link</span>`)
+		return
+	}
+
+	h.linkAll = &LinkAllStatus{Total: len(eligible), Running: true}
+	h.linkAllMu.Unlock()
+
+	go func() {
+		for i, number := range eligible {
+			h.linkAllMu.Lock()
+			h.linkAll.Done = i
+			h.linkAll.Current = number
+			h.linkAllMu.Unlock()
+
+			group := h.staging.GetGroup(number)
+			if group == nil {
+				continue
+			}
+			var paths []string
+			for _, item := range group.Items {
+				if item.File.Ready {
+					paths = append(paths, item.File.Path)
+				}
+			}
+			h.staging.SetTask(number, "linking", "")
+			if err := h.executor.Link(context.Background(), number, paths); err != nil {
+				log.Printf("[link-all] %s: error: %v", number, err)
+				h.staging.SetTask(number, "error", err.Error())
+				h.linkAllMu.Lock()
+				h.linkAll.Errors = append(h.linkAll.Errors, fmt.Sprintf("%s: %s", number, err.Error()))
+				h.linkAllMu.Unlock()
+			}
+		}
+
+		h.linkAllMu.Lock()
+		h.linkAll.Done = len(eligible)
+		h.linkAll.Current = ""
+		h.linkAll.Running = false
+		h.linkAllMu.Unlock()
+	}()
+
+	h.renderLinkAllProgress(w)
+}
+
+func (h *Handlers) LinkAllProgress(w http.ResponseWriter, r *http.Request) {
+	h.renderLinkAllProgress(w)
+}
+
+func (h *Handlers) renderLinkAllProgress(w http.ResponseWriter) {
+	h.linkAllMu.Lock()
+	s := h.linkAll
+	h.linkAllMu.Unlock()
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+
+	if s == nil {
+		fmt.Fprint(w, `<span>No link-all job</span>`)
+		return
+	}
+
+	if s.Running {
+		pct := 0
+		if s.Total > 0 {
+			pct = s.Done * 100 / s.Total
+		}
+		fmt.Fprintf(w,
+			`<div id="link-all-progress" hx-get="/api/groups/link-all/progress" hx-trigger="every 1s" hx-swap="outerHTML">`+
+				`<progress value="%d" max="100" style="margin:0; width:100%%;">%d%%</progress>`+
+				`<small>Linking %d/%d: %s</small>`+
+				`</div>`,
+			pct, pct, s.Done+1, s.Total, s.Current)
+		return
+	}
+
+	// Done
+	errHTML := ""
+	if len(s.Errors) > 0 {
+		errHTML = fmt.Sprintf(`<small style="color:#fca5a5;">%d errors</small>`, len(s.Errors))
+	}
+	fmt.Fprintf(w,
+		`<div id="link-all-progress" hx-get="/partials/dashboard" hx-trigger="load delay:1s" hx-target="#dashboard-content" hx-swap="outerHTML">`+
+			`<small style="color:#6ee7b7;">Linked %d groups</small> %s`+
+			`</div>`,
+		s.Done-len(s.Errors), errHTML)
 }
 
 func (h *Handlers) GroupRescrape(w http.ResponseWriter, r *http.Request) {
@@ -359,7 +488,7 @@ func (h *Handlers) TestDMM(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := provider.NewDMM(apiID, affID)
-	_, err := p.Scrape(r.Context(), "SIVR-476")
+	_, err := p.Scrape(r.Context(), provider.Predict{Number: "SIVR-476"})
 	if err != nil {
 		fmt.Fprintf(w, `<span style="color:#fca5a5;">Failed: %s</span>`, err.Error())
 		return
@@ -528,7 +657,7 @@ func (h *Handlers) buildDashboardData(ctx context.Context) DashboardData {
 	lib := make([]LibraryView, 0, len(outputs))
 	metaCache := map[string]*committed.Metadata{}
 	for _, o := range outputs {
-		lv := LibraryView{ID: o.ID, Number: o.Number, LinkPath: o.LinkPath, LinkType: o.LinkType, Alive: o.Alive}
+		lv := LibraryView{ID: o.ID, Number: o.Number, SrcPath: o.SrcPath, LinkPath: o.LinkPath, LinkType: o.LinkType, Alive: o.Alive}
 		meta, ok := metaCache[o.Number]
 		if !ok {
 			meta, _ = h.store.GetMetadata(ctx, o.Number)
@@ -600,7 +729,14 @@ func (h *Handlers) buildDashboardData(ctx context.Context) DashboardData {
 		mkvmergePath = p
 	}
 
-	return DashboardData{Pending: pending, Unknown: unk, Library: lib, InputDir: inputDir, Aria2Enabled: aria2Enabled, Aria2Connected: aria2Connected, MkvmergePath: mkvmergePath}
+	linkable := 0
+	for _, gv := range pending {
+		if gv.Scrape.Status == "success" && gv.AllReady && gv.Task == "" {
+			linkable++
+		}
+	}
+
+	return DashboardData{Pending: pending, Unknown: unk, Library: lib, LinkableCount: linkable, InputDir: inputDir, Aria2Enabled: aria2Enabled, Aria2Connected: aria2Connected, MkvmergePath: mkvmergePath}
 }
 
 func (h *Handlers) buildGroupView(g staging.StagingGroup) GroupView {
