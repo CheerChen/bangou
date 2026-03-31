@@ -4,239 +4,521 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"os/exec"
-	"regexp"
-	"sort"
+	"net/http"
 	"strconv"
 	"strings"
 	"sync"
 
-	"net/http"
-
 	"github.com/CheerChen/bangou/committed"
-	"github.com/CheerChen/bangou/config"
 	"github.com/CheerChen/bangou/executor"
 	"github.com/CheerChen/bangou/provider"
-	"github.com/CheerChen/bangou/scanner"
 	"github.com/CheerChen/bangou/staging"
 )
 
-// Aria2Status provides aria2 connection state to the web layer.
-type Aria2Status interface {
-	Connected() bool
-}
-
 type Handlers struct {
-	staging    *staging.Manager
-	store      committed.Store
-	executor   *executor.Executor
-	scanFn         func()
-	rescrapeFn     func(string)
-	libScrapeFn    func(string) (*provider.MovieMetadata, map[string]string) // standalone scrape for library items
-	aria2          Aria2Status
-	// Library rescrape: pending new results awaiting user confirmation
+	staging     *staging.Manager
+	store       committed.Store
+	executor    *executor.Executor
+	scanFn      func()
+	rescrapeFn  func(string)
+	libScrapeFn func(string) (*provider.MovieMetadata, map[string]string)
+	aria2       Aria2Status
+
 	libRescrape sync.Map // number -> *LibRescrapeResult
 
-	// Link All state
 	linkAllMu sync.Mutex
 	linkAll   *LinkAllStatus
 }
 
 type LinkAllStatus struct {
-	Total   int
-	Done    int
-	Current string
-	Errors  []string
-	Running bool
+	Total   int      `json:"total"`
+	Done    int      `json:"done"`
+	Current string   `json:"current"`
+	Errors  []string `json:"errors,omitempty"`
+	Running bool     `json:"running"`
 }
 
 type LibRescrapeResult struct {
-	Status string // "scraping", "done", "failed"
+	Status string
 	Old    *committed.Metadata
 	New    *provider.MovieMetadata
 	Errors map[string]string
 }
 
-type GroupView struct {
-	DOMID        string
-	Number       string
-	Items        []ItemView
-	ParsedCount  int
-	TotalSizeGB  float64
-	Scrape       staging.ScrapeResult
-	MetaTitle    string
-	MetaLine     string
-	MetaActors   string
-	Genres       []string
-	SampleImages []string
-	Rating       string
-	ReviewCount  int
-	PageURL      string
-	Runtime      string
-	ErrorText    string
-	Task         string
-	TaskErr      string
-	TaskProgress int
-	AllReady     bool
-	Progress     int
-	StateClass   string
+// ── Pipelines ──
+
+type PipelineResponse struct {
+	ID               int64    `json:"id"`
+	Name             string   `json:"name"`
+	InputDir         string   `json:"inputDir"`
+	OutputDir        string   `json:"outputDir"`
+	PathPattern      string   `json:"pathPattern"`
+	ArchiveDir       string   `json:"archiveDir"`
+	EnableMerge      bool     `json:"enableMerge"`
+	DownloadProvider string   `json:"downloadProvider"`
+	ScrapeProviders  []string `json:"scrapeProviders"`
+	PendingCount     int      `json:"pendingCount"`
+	LibraryCount     int      `json:"libraryCount"`
+	Status           string   `json:"status"` // "idle", "scanning"
 }
 
-type ItemView struct {
-	Path       string
-	Filename   string
-	Part       int
-	SizeGB     float64
-	Ready      bool
-	Number     string
-	SourceSite string
-	Tags       string
-	Resolution     string
-	VideoCodec     string
-	AudioCodec     string
-	Bitrate        string
-	Duration       string
-	DownloadPct    int
-	DownloadStatus string
-}
-
-type UnknownView struct {
-	DOMID    string
-	Path     string
-	Filename string
-	SizeGB   float64
-}
-
-type LibraryView struct {
-	ID              int64
-	Number          string
-	SrcPath         string
-	LinkPath        string
-	LinkType        string
-	Alive           bool
-	Title           string
-	MetaLine        string
-	Actors          string
-	Genres          []string
-	CoverURL        string
-	SampleImages    []string
-	Rating          string
-	ReviewCount     int
-	PageURL         string
-	Runtime         string
-	Provider        string
-	RescrapeStatus  string
-	NewTitle        string
-	NewMetaLine     string
-	NewActors       string
-	NewCoverURL     string
-	NewProvider     string
-	RescrapeErrors  string
-}
-
-type ProviderView struct {
-	ID      string
-	Name    string
-	Enabled bool
-}
-
-type DashboardData struct {
-	Pending        []GroupView
-	Unknown        []UnknownView
-	Library        []LibraryView
-	LinkableCount  int
-	InputDir       string
-	Aria2Connected bool
-	Aria2Enabled   bool
-	Tab            string // "pending" or "library"
-	MkvmergePath   string
-}
-
-func (h *Handlers) Index(w http.ResponseWriter, r *http.Request) {
-	if h.scanFn != nil {
-		h.scanFn()
+func (h *Handlers) ListPipelines(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	pipes, err := h.store.ListPipelines(ctx)
+	if err != nil {
+		writeError(w, 500, err.Error())
+		return
 	}
-	renderIndex(w, h.buildDashboardData(r.Context()))
-}
-
-func (h *Handlers) DashboardPartial(w http.ResponseWriter, r *http.Request) {
-	data := h.buildDashboardData(r.Context())
-	tab := r.URL.Query().Get("tab")
-	if tab == "library" || tab == "pending" {
-		data.Tab = tab
+	out := make([]PipelineResponse, 0, len(pipes))
+	for _, p := range pipes {
+		_, libCount, _ := h.store.ListOutputsByPipeline(ctx, p.ID, 0, 0)
+		groups := h.staging.ListGroups()
+		unknowns := h.staging.ListUnknowns()
+		out = append(out, PipelineResponse{
+			ID:               p.ID,
+			Name:             p.Name,
+			InputDir:         p.InputDir,
+			OutputDir:        p.OutputDir,
+			PathPattern:      p.PathPattern,
+			ArchiveDir:       p.ArchiveDir,
+			EnableMerge:      p.EnableMerge,
+			DownloadProvider: p.DownloadProvider,
+			ScrapeProviders:  splitProviders(p.ScrapeProviders),
+			PendingCount:     len(groups) + len(unknowns),
+			LibraryCount:     libCount,
+			Status:           "idle",
+		})
 	}
-	renderPartial(w, "dashboard-content", data)
+	writeOK(w, out)
 }
 
-func (h *Handlers) GroupAction(w http.ResponseWriter, r *http.Request) {
-	_ = r.ParseForm()
+func (h *Handlers) CreatePipeline(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name             string   `json:"name"`
+		InputDir         string   `json:"inputDir"`
+		OutputDir        string   `json:"outputDir"`
+		PathPattern      string   `json:"pathPattern"`
+		ArchiveDir       string   `json:"archiveDir"`
+		EnableMerge      bool     `json:"enableMerge"`
+		DownloadProvider string   `json:"downloadProvider"`
+		ScrapeProviders  []string `json:"scrapeProviders"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, 400, "invalid JSON")
+		return
+	}
+	if req.Name == "" || req.InputDir == "" || req.OutputDir == "" {
+		writeError(w, 400, "name, inputDir, outputDir are required")
+		return
+	}
+	if req.PathPattern == "" {
+		req.PathPattern = "{Number}"
+	}
+	if len(req.ScrapeProviders) == 0 {
+		req.ScrapeProviders = []string{"avwiki", "dmm"}
+	}
+
+	p := &committed.Pipeline{
+		Name:             req.Name,
+		InputDir:         req.InputDir,
+		OutputDir:        req.OutputDir,
+		PathPattern:      req.PathPattern,
+		ArchiveDir:       req.ArchiveDir,
+		EnableMerge:      req.EnableMerge,
+		DownloadProvider: req.DownloadProvider,
+		ScrapeProviders:  strings.Join(req.ScrapeProviders, ","),
+	}
+	id, err := h.store.CreatePipeline(r.Context(), p)
+	if err != nil {
+		if strings.Contains(err.Error(), "UNIQUE") {
+			writeError(w, 409, "input directory already in use")
+			return
+		}
+		writeError(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 201, map[string]int64{"id": id})
+}
+
+func (h *Handlers) DeletePipeline(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeError(w, 400, "invalid id")
+		return
+	}
+	if err := h.store.DeletePipeline(r.Context(), id); err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	writeOK(w, map[string]string{"status": "deleted"})
+}
+
+// ── Groups (Pending) ──
+
+type GroupResponse struct {
+	Number       string            `json:"number"`
+	Items        []ItemResponse    `json:"items"`
+	TotalSizeGB  float64           `json:"totalSizeGB"`
+	Scrape       ScrapeResponse    `json:"scrape"`
+	Task         string            `json:"task"`
+	TaskErr      string            `json:"taskErr,omitempty"`
+	TaskProgress int               `json:"taskProgress"`
+	AllReady     bool              `json:"allReady"`
+}
+
+type ItemResponse struct {
+	Path           string  `json:"path"`
+	Filename       string  `json:"filename"`
+	Part           int     `json:"part"`
+	SizeGB         float64 `json:"sizeGB"`
+	Ready          bool    `json:"ready"`
+	Resolution     string  `json:"resolution,omitempty"`
+	VideoCodec     string  `json:"videoCodec,omitempty"`
+	AudioCodec     string  `json:"audioCodec,omitempty"`
+	Bitrate        string  `json:"bitrate,omitempty"`
+	Duration       string  `json:"duration,omitempty"`
+	DownloadPct    int     `json:"downloadPct"`
+	DownloadStatus string  `json:"downloadStatus,omitempty"`
+}
+
+type ScrapeResponse struct {
+	Meta   *MetaResponse     `json:"meta"`
+	Errors map[string]string `json:"errors,omitempty"`
+	Status string            `json:"status"`
+}
+
+type MetaResponse struct {
+	Number       string   `json:"number"`
+	Title        string   `json:"title"`
+	Maker        string   `json:"maker,omitempty"`
+	Label        string   `json:"label,omitempty"`
+	Series       string   `json:"series,omitempty"`
+	Actors       []string `json:"actors,omitempty"`
+	Genres       []string `json:"genres,omitempty"`
+	CoverURL     string   `json:"coverURL,omitempty"`
+	SampleImages []string `json:"sampleImages,omitempty"`
+	Premiered    string   `json:"premiered,omitempty"`
+	Year         string   `json:"year,omitempty"`
+	Runtime      string   `json:"runtime,omitempty"`
+	Rating       string   `json:"rating,omitempty"`
+	ReviewCount  int      `json:"reviewCount"`
+	PageURL      string   `json:"pageURL,omitempty"`
+	Provider     string   `json:"provider,omitempty"`
+}
+
+type UnknownResponse struct {
+	Path     string  `json:"path"`
+	Filename string  `json:"filename"`
+	SizeGB   float64 `json:"sizeGB"`
+}
+
+type GroupsPageResponse struct {
+	Groups   []GroupResponse   `json:"groups"`
+	Unknowns []UnknownResponse `json:"unknowns"`
+	Linkable int               `json:"linkable"`
+}
+
+func (h *Handlers) ListGroups(w http.ResponseWriter, r *http.Request) {
+	groups := h.staging.ListGroups()
+	unknowns := h.staging.ListUnknowns()
+
+	grs := make([]GroupResponse, 0, len(groups))
+	linkable := 0
+	for _, g := range groups {
+		gr := buildGroupResponse(g)
+		if gr.Scrape.Status == "success" && gr.AllReady && gr.Task == "" {
+			linkable++
+		}
+		grs = append(grs, gr)
+	}
+
+	urs := make([]UnknownResponse, 0, len(unknowns))
+	for _, u := range unknowns {
+		urs = append(urs, UnknownResponse{
+			Path:     u.Path,
+			Filename: u.Filename,
+			SizeGB:   float64(u.Size) / (1024 * 1024 * 1024),
+		})
+	}
+
+	writeOK(w, GroupsPageResponse{Groups: grs, Unknowns: urs, Linkable: linkable})
+}
+
+func buildGroupResponse(g staging.StagingGroup) GroupResponse {
+	gr := GroupResponse{
+		Number:       g.Number,
+		Task:         g.Task,
+		TaskErr:      g.TaskErr,
+		TaskProgress: g.TaskProgress,
+		AllReady:     true,
+	}
+
+	var totalSize int64
+	items := make([]ItemResponse, 0, len(g.Items))
+	for _, item := range g.Items {
+		totalSize += item.File.Size
+		if !item.File.Ready {
+			gr.AllReady = false
+		}
+		ir := ItemResponse{
+			Path:           item.File.Path,
+			Filename:       item.File.Filename,
+			Part:           item.Parsed.Part,
+			SizeGB:         float64(item.File.Size) / (1024 * 1024 * 1024),
+			Ready:          item.File.Ready,
+			DownloadPct:    item.File.DownloadPct,
+			DownloadStatus: item.File.DownloadStatus,
+		}
+		if item.File.Media != nil {
+			m := item.File.Media
+			ir.Resolution = m.Resolution()
+			ir.VideoCodec = m.VideoCodec
+			ir.AudioCodec = m.AudioCodec
+			ir.Bitrate = m.BitrateText()
+			ir.Duration = m.DurationText()
+		}
+		items = append(items, ir)
+	}
+	gr.Items = items
+	gr.TotalSizeGB = float64(totalSize) / (1024 * 1024 * 1024)
+
+	gr.Scrape = ScrapeResponse{
+		Errors: g.Scrape.Errors,
+		Status: g.Scrape.Status,
+	}
+	if g.Scrape.Meta != nil {
+		mm := g.Scrape.Meta
+		gr.Scrape.Meta = &MetaResponse{
+			Number:       mm.Number,
+			Title:        mm.Title,
+			Maker:        mm.Maker,
+			Label:        mm.Label,
+			Series:       mm.Series,
+			Actors:       mm.Actors,
+			Genres:       mm.Genres,
+			CoverURL:     mm.CoverURL,
+			SampleImages: mm.SampleImages,
+			Premiered:    mm.Premiered,
+			Year:         mm.Year,
+			Runtime:      mm.Runtime,
+			Rating:       mm.Rating,
+			ReviewCount:  mm.ReviewCount,
+			PageURL:      mm.PageURL,
+			Provider:     mm.Provider,
+		}
+	}
+	return gr
+}
+
+// ── Group Actions ──
+
+func (h *Handlers) GroupLink(w http.ResponseWriter, r *http.Request) {
 	number := strings.ToUpper(strings.TrimSpace(r.PathValue("number")))
-	action := strings.TrimSpace(r.FormValue("action"))
-	if number == "" || action == "" {
-		http.Error(w, "invalid request", http.StatusBadRequest)
+	var req struct {
+		Paths []string `json:"paths"`
+	}
+	if err := readJSON(r, &req); err != nil || len(req.Paths) == 0 {
+		writeError(w, 400, "paths required")
 		return
 	}
+	h.staging.SetTask(number, "linking", "")
+	go func() {
+		if err := h.executor.Link(context.Background(), number, req.Paths); err != nil {
+			log.Printf("[link] %s: error: %v", number, err)
+			h.staging.SetTask(number, "error", err.Error())
+		}
+	}()
+	writeOK(w, map[string]string{"status": "linking"})
+}
 
-	paths := r.Form["paths"]
-
-	switch action {
-	case "link":
-		if len(paths) == 0 {
-			http.Error(w, "no files selected", http.StatusBadRequest)
+func (h *Handlers) GroupMerge(w http.ResponseWriter, r *http.Request) {
+	number := strings.ToUpper(strings.TrimSpace(r.PathValue("number")))
+	var req struct {
+		Paths []string `json:"paths"`
+	}
+	if err := readJSON(r, &req); err != nil || len(req.Paths) < 2 {
+		writeError(w, 400, "at least 2 paths required")
+		return
+	}
+	h.staging.SetTask(number, "merging", "")
+	go func() {
+		if err := h.executor.Merge(context.Background(), number, req.Paths); err != nil {
+			log.Printf("[merge] %s: error: %v", number, err)
+			h.staging.SetTask(number, "error", err.Error())
 			return
 		}
-		h.staging.SetTask(number, "linking", "")
-		go func() {
-			if err := h.executor.Link(context.Background(), number, paths); err != nil {
-				log.Printf("[link] %s: error: %v", number, err)
-				h.staging.SetTask(number, "error", err.Error())
-			}
-		}()
-	case "merge":
-		if len(paths) < 2 {
-			http.Error(w, "select at least 2 files to merge", http.StatusBadRequest)
-			return
+		h.staging.SetTask(number, "", "")
+		if h.scanFn != nil {
+			h.scanFn()
 		}
-		h.staging.SetTask(number, "merging", "")
-		go func() {
-			if err := h.executor.Merge(context.Background(), number, paths); err != nil {
-				log.Printf("[merge] %s: error: %v", number, err)
-				h.staging.SetTask(number, "error", err.Error())
-				return
-			}
-			h.staging.SetTask(number, "", "")
-			// Rescan so the merged file appears in staging
-			if h.scanFn != nil {
-				h.scanFn()
-			}
-		}()
-	case "ignore":
-		h.staging.SetIgnored(number, true)
-		fmt.Fprintf(w, `<div id="group-%s"></div>`, domID(number))
+	}()
+	writeOK(w, map[string]string{"status": "merging"})
+}
+
+func (h *Handlers) GroupIgnore(w http.ResponseWriter, r *http.Request) {
+	number := strings.ToUpper(strings.TrimSpace(r.PathValue("number")))
+	h.staging.SetIgnored(number, true)
+	writeOK(w, map[string]string{"status": "ignored"})
+}
+
+func (h *Handlers) GroupRescrape(w http.ResponseWriter, r *http.Request) {
+	number := strings.ToUpper(strings.TrimSpace(r.PathValue("number")))
+	h.staging.SetScrapeStatus(number, "scraping", map[string]string{})
+	if h.rescrapeFn != nil {
+		h.rescrapeFn(number)
+	}
+	writeOK(w, map[string]string{"status": "scraping"})
+}
+
+func (h *Handlers) ManualTag(w http.ResponseWriter, r *http.Request) {
+	number := strings.ToUpper(strings.TrimSpace(r.PathValue("number")))
+	var req struct {
+		Path string `json:"path"`
+	}
+	if err := readJSON(r, &req); err != nil || req.Path == "" {
+		writeError(w, 400, "path required")
 		return
-	default:
-		http.Error(w, "invalid action", http.StatusBadRequest)
+	}
+	h.staging.ManualTag(req.Path, number)
+	writeOK(w, map[string]string{"status": "tagged"})
+}
+
+// ── Unknown File Actions ──
+
+func (h *Handlers) UnknownTag(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Path   string `json:"path"`
+		Number string `json:"number"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, 400, "invalid JSON")
+		return
+	}
+	req.Number = strings.ToUpper(strings.TrimSpace(req.Number))
+	if req.Path == "" || req.Number == "" {
+		writeError(w, 400, "path and number required")
+		return
+	}
+	h.staging.ManualTag(req.Path, req.Number)
+	writeOK(w, map[string]string{"status": "tagged"})
+}
+
+func (h *Handlers) UnknownIgnore(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Path string `json:"path"`
+	}
+	if err := readJSON(r, &req); err != nil || req.Path == "" {
+		writeError(w, 400, "path required")
+		return
+	}
+	h.staging.SetUnknownIgnored(req.Path, true)
+	writeOK(w, map[string]string{"status": "ignored"})
+}
+
+// ── Library ──
+
+type LibraryItemResponse struct {
+	ID           int64    `json:"id"`
+	Number       string   `json:"number"`
+	SrcPath      string   `json:"srcPath"`
+	LinkPath     string   `json:"linkPath"`
+	LinkType     string   `json:"linkType"`
+	Alive        bool     `json:"alive"`
+	Title        string   `json:"title,omitempty"`
+	Actors       string   `json:"actors,omitempty"`
+	Genres       []string `json:"genres,omitempty"`
+	CoverURL     string   `json:"coverURL,omitempty"`
+	SampleImages []string `json:"sampleImages,omitempty"`
+	Rating       string   `json:"rating,omitempty"`
+	ReviewCount  int      `json:"reviewCount"`
+	PageURL      string   `json:"pageURL,omitempty"`
+	Maker        string   `json:"maker,omitempty"`
+	Year         string   `json:"year,omitempty"`
+	Runtime      string   `json:"runtime,omitempty"`
+	Provider     string   `json:"provider,omitempty"`
+}
+
+type LibraryPageResponse struct {
+	Items []LibraryItemResponse `json:"items"`
+	Total int                   `json:"total"`
+	Page  int                   `json:"page"`
+	Size  int                   `json:"size"`
+}
+
+func (h *Handlers) ListLibrary(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeError(w, 400, "invalid pipeline id")
+		return
+	}
+	ctx := r.Context()
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	size, _ := strconv.Atoi(r.URL.Query().Get("size"))
+	if size <= 0 || size > 100 {
+		size = 12
+	}
+	if page < 0 {
+		page = 0
+	}
+
+	outputs, total, err := h.store.ListOutputsByPipeline(ctx, id, size, page*size)
+	if err != nil {
+		writeError(w, 500, err.Error())
 		return
 	}
 
-	// Return updated card showing task status (merging/linking)
-	g := h.staging.GetGroup(number)
-	if g == nil {
-		fmt.Fprintf(w, `<div id="group-%s"></div>`, domID(number))
-		return
+	metaCache := map[string]*committed.Metadata{}
+	items := make([]LibraryItemResponse, 0, len(outputs))
+	for _, o := range outputs {
+		lv := LibraryItemResponse{
+			ID: o.ID, Number: o.Number, SrcPath: o.SrcPath, LinkPath: o.LinkPath,
+			LinkType: o.LinkType, Alive: o.Alive,
+		}
+		meta, ok := metaCache[o.Number]
+		if !ok {
+			meta, _ = h.store.GetMetadata(ctx, o.Number)
+			metaCache[o.Number] = meta
+		}
+		if meta != nil {
+			lv.Title = meta.Title
+			lv.Actors = meta.Actors
+			lv.CoverURL = meta.CoverURL
+			lv.Provider = meta.Provider
+			lv.Rating = meta.Rating
+			lv.ReviewCount = meta.ReviewCount
+			lv.PageURL = meta.PageURL
+			lv.Maker = meta.Maker
+			lv.Year = meta.Year
+			lv.Runtime = meta.Runtime
+			if meta.Genres != "" {
+				lv.Genres = strings.Split(meta.Genres, ",")
+			}
+			if meta.SampleImages != "" {
+				lv.SampleImages = strings.Split(meta.SampleImages, ",")
+			}
+		}
+		items = append(items, lv)
 	}
-	renderPartial(w, "group-card", h.buildGroupView(*g))
+	writeOK(w, LibraryPageResponse{Items: items, Total: total, Page: page, Size: size})
+}
+
+// ── Scan / Link All ──
+
+func (h *Handlers) TriggerScan(w http.ResponseWriter, r *http.Request) {
+	if h.scanFn != nil {
+		go h.scanFn()
+	}
+	writeOK(w, map[string]string{"status": "scanning"})
 }
 
 func (h *Handlers) LinkAll(w http.ResponseWriter, r *http.Request) {
 	h.linkAllMu.Lock()
 	if h.linkAll != nil && h.linkAll.Running {
 		h.linkAllMu.Unlock()
-		h.renderLinkAllProgress(w)
+		writeOK(w, h.linkAll)
 		return
 	}
 
-	// Collect eligible groups: scrape success, all ready, no active task
 	groups := h.staging.ListGroups()
 	var eligible []string
 	for _, g := range groups {
@@ -257,7 +539,7 @@ func (h *Handlers) LinkAll(w http.ResponseWriter, r *http.Request) {
 
 	if len(eligible) == 0 {
 		h.linkAllMu.Unlock()
-		fmt.Fprint(w, `<span style="color:#fca5a5;">No eligible groups to link</span>`)
+		writeError(w, 400, "no eligible groups")
 		return
 	}
 
@@ -290,7 +572,6 @@ func (h *Handlers) LinkAll(w http.ResponseWriter, r *http.Request) {
 				h.linkAllMu.Unlock()
 			}
 		}
-
 		h.linkAllMu.Lock()
 		h.linkAll.Done = len(eligible)
 		h.linkAll.Current = ""
@@ -298,594 +579,177 @@ func (h *Handlers) LinkAll(w http.ResponseWriter, r *http.Request) {
 		h.linkAllMu.Unlock()
 	}()
 
-	h.renderLinkAllProgress(w)
+	writeOK(w, h.linkAll)
 }
 
 func (h *Handlers) LinkAllProgress(w http.ResponseWriter, r *http.Request) {
-	h.renderLinkAllProgress(w)
-}
-
-func (h *Handlers) renderLinkAllProgress(w http.ResponseWriter) {
 	h.linkAllMu.Lock()
 	s := h.linkAll
 	h.linkAllMu.Unlock()
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-
 	if s == nil {
-		fmt.Fprint(w, `<span>No link-all job</span>`)
+		writeOK(w, map[string]any{"running": false})
 		return
 	}
-
-	if s.Running {
-		pct := 0
-		if s.Total > 0 {
-			pct = s.Done * 100 / s.Total
-		}
-		fmt.Fprintf(w,
-			`<div id="link-all-progress" hx-get="/api/groups/link-all/progress" hx-trigger="every 1s" hx-swap="outerHTML">`+
-				`<progress value="%d" max="100" style="margin:0; width:100%%;">%d%%</progress>`+
-				`<small>Linking %d/%d: %s</small>`+
-				`</div>`,
-			pct, pct, s.Done+1, s.Total, s.Current)
-		return
-	}
-
-	// Done
-	errHTML := ""
-	if len(s.Errors) > 0 {
-		errHTML = fmt.Sprintf(`<small style="color:#fca5a5;">%d errors</small>`, len(s.Errors))
-	}
-	fmt.Fprintf(w,
-		`<div id="link-all-progress" hx-get="/partials/dashboard" hx-trigger="load delay:1s" hx-target="#dashboard-content" hx-swap="outerHTML">`+
-			`<small style="color:#6ee7b7;">Linked %d groups</small> %s`+
-			`</div>`,
-		s.Done-len(s.Errors), errHTML)
+	writeOK(w, s)
 }
 
-func (h *Handlers) GroupRescrape(w http.ResponseWriter, r *http.Request) {
-	number := strings.ToUpper(strings.TrimSpace(r.PathValue("number")))
-	if number == "" {
-		http.Error(w, "invalid number", http.StatusBadRequest)
-		return
-	}
-	h.staging.SetScrapeStatus(number, "scraping", map[string]string{})
-	if h.rescrapeFn != nil {
-		h.rescrapeFn(number)
-	}
-	g := h.staging.GetGroup(number)
-	if g == nil {
-		fmt.Fprintf(w, `<div id="group-%s"></div>`, domID(number))
-		return
-	}
-	renderPartial(w, "group-card", h.buildGroupView(*g))
-}
-
-func (h *Handlers) TriggerScan(w http.ResponseWriter, r *http.Request) {
-	if h.scanFn != nil {
-		h.scanFn()
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-func (h *Handlers) ManualTag(w http.ResponseWriter, r *http.Request) {
-	_ = r.ParseForm()
-	path := strings.TrimSpace(r.FormValue("path"))
-	number := strings.ToUpper(strings.TrimSpace(r.FormValue("number")))
-	if path == "" || number == "" {
-		http.Error(w, "path and number are required", http.StatusBadRequest)
-		return
-	}
-	h.staging.ManualTag(path, number)
-	fmt.Fprintf(w, `<div id="unknown-%s"></div>`, domID(path))
-}
-
-func (h *Handlers) IgnoreUnknown(w http.ResponseWriter, r *http.Request) {
-	_ = r.ParseForm()
-	path := strings.TrimSpace(r.FormValue("path"))
-	if path == "" {
-		http.Error(w, "path is required", http.StatusBadRequest)
-		return
-	}
-	h.staging.SetUnknownIgnored(path, true)
-	fmt.Fprintf(w, `<div id="unknown-%s"></div>`, domID(path))
-}
+// ── Library Rescrape ──
 
 func (h *Handlers) LibraryRescrape(w http.ResponseWriter, r *http.Request) {
 	number := strings.ToUpper(strings.TrimSpace(r.PathValue("number")))
-	if number == "" {
-		http.Error(w, "invalid number", http.StatusBadRequest)
+	if _, loaded := h.libRescrape.LoadOrStore(number, &LibRescrapeResult{Status: "scraping"}); loaded {
+		writeError(w, 409, "rescrape already in progress")
 		return
 	}
-	h.libRescrape.Store(number, &LibRescrapeResult{Status: "scraping"})
 	go func() {
-		old, _ := h.store.GetMetadata(context.Background(), number)
-		log.Printf("[library] rescraping %s", number)
 		meta, errs := h.libScrapeFn(number)
 		if meta != nil {
+			old, _ := h.store.GetMetadata(context.Background(), number)
 			h.libRescrape.Store(number, &LibRescrapeResult{Status: "done", Old: old, New: meta, Errors: errs})
-			log.Printf("[library] rescrape done: %s -> %s (%s)", number, meta.Title, meta.Provider)
 		} else {
-			h.libRescrape.Store(number, &LibRescrapeResult{Status: "failed", Old: old, Errors: errs})
-			log.Printf("[library] rescrape failed: %s", number)
+			h.libRescrape.Store(number, &LibRescrapeResult{Status: "failed", Errors: errs})
 		}
 	}()
-	w.WriteHeader(http.StatusNoContent)
+	writeOK(w, map[string]string{"status": "scraping"})
 }
 
 func (h *Handlers) LibraryRescrapeApply(w http.ResponseWriter, r *http.Request) {
 	number := strings.ToUpper(strings.TrimSpace(r.PathValue("number")))
-	if number == "" {
-		http.Error(w, "invalid number", http.StatusBadRequest)
-		return
-	}
-	val, ok := h.libRescrape.Load(number)
+	v, ok := h.libRescrape.Load(number)
 	if !ok {
-		http.Error(w, "no pending rescrape", http.StatusNotFound)
+		writeError(w, 404, "no pending rescrape")
 		return
 	}
-	result := val.(*LibRescrapeResult)
-	if result.New == nil {
-		http.Error(w, "no new metadata", http.StatusBadRequest)
+	res := v.(*LibRescrapeResult)
+	if res.Status != "done" || res.New == nil {
+		writeError(w, 400, "rescrape not ready")
 		return
 	}
-	// Update DB with new metadata
-	_ = h.store.UpsertMetadata(r.Context(), &committed.Metadata{
-		Number:       number,
-		Title:        result.New.Title,
-		Plot:         result.New.Plot,
-		Director:     result.New.Director,
-		Maker:        result.New.Maker,
-		Label:        result.New.Label,
-		Series:       result.New.Series,
-		Actors:       strings.Join(result.New.Actors, ","),
-		Genres:       strings.Join(result.New.Genres, ","),
-		CoverURL:     result.New.CoverURL,
-		SampleImages: strings.Join(result.New.SampleImages, ","),
-		Premiered:    result.New.Premiered,
-		Year:         result.New.Year,
-		Runtime:      result.New.Runtime,
-		Rating:       result.New.Rating,
-		ReviewCount:  result.New.ReviewCount,
-		PageURL:      result.New.PageURL,
-		ContentID:    result.New.ContentID,
-		Provider:     result.New.Provider,
+	ctx := r.Context()
+	_ = h.store.UpsertMetadata(ctx, &committed.Metadata{
+		Number: number, Title: res.New.Title, Plot: res.New.Plot,
+		Director: res.New.Director, Maker: res.New.Maker, Label: res.New.Label,
+		Series: res.New.Series, Actors: strings.Join(res.New.Actors, ","),
+		Genres: strings.Join(res.New.Genres, ","), CoverURL: res.New.CoverURL,
+		SampleImages: strings.Join(res.New.SampleImages, ","),
+		Premiered: res.New.Premiered, Year: res.New.Year, Runtime: res.New.Runtime,
+		Rating: res.New.Rating, ReviewCount: res.New.ReviewCount,
+		PageURL: res.New.PageURL, ContentID: res.New.ContentID, Provider: res.New.Provider,
 	})
 	h.libRescrape.Delete(number)
-	log.Printf("[library] rescrape applied: %s", number)
-	// Trigger refresh
-	w.WriteHeader(http.StatusOK)
+	writeOK(w, map[string]string{"status": "applied"})
 }
 
 func (h *Handlers) LibraryRescrapeDismiss(w http.ResponseWriter, r *http.Request) {
 	number := strings.ToUpper(strings.TrimSpace(r.PathValue("number")))
 	h.libRescrape.Delete(number)
-	w.WriteHeader(http.StatusOK)
+	writeOK(w, map[string]string{"status": "dismissed"})
 }
 
-func (h *Handlers) TestAria2(w http.ResponseWriter, r *http.Request) {
-	_ = r.ParseForm()
-	url := strings.TrimSpace(r.FormValue("aria2_rpc_url"))
-	token := strings.TrimSpace(r.FormValue("aria2_token"))
-	if url == "" {
-		fmt.Fprint(w, `<span style="color:#fca5a5;">URL is required</span>`)
-		return
-	}
-	ver, err := scanner.TestAria2Connection(url, token)
-	if err != nil {
-		fmt.Fprintf(w, `<span style="color:#fca5a5;">Failed: %s</span>`, err.Error())
-		return
-	}
-	fmt.Fprintf(w, `<span style="color:#6ee7b7;">Connected! aria2 v%s</span>`, ver)
-}
-
-func (h *Handlers) TestDMM(w http.ResponseWriter, r *http.Request) {
-	_ = r.ParseForm()
-	apiID := strings.TrimSpace(r.FormValue("dmm_api_id"))
-	affID := strings.TrimSpace(r.FormValue("dmm_affiliate_id"))
-	if apiID == "" || affID == "" {
-		fmt.Fprint(w, `<span style="color:#fca5a5;">API ID and Affiliate ID required</span>`)
-		return
-	}
-	p := provider.NewDMM(apiID, affID)
-	_, err := p.Scrape(r.Context(), provider.Predict{Number: "SIVR-476"})
-	if err != nil {
-		fmt.Fprintf(w, `<span style="color:#fca5a5;">Failed: %s</span>`, err.Error())
-		return
-	}
-	fmt.Fprint(w, `<span style="color:#6ee7b7;">OK! DMM API working</span>`)
-}
+// ── Output Actions ──
 
 func (h *Handlers) UnlinkOutput(w http.ResponseWriter, r *http.Request) {
-	idStr := strings.TrimSpace(r.PathValue("id"))
-	number := strings.ToUpper(strings.TrimSpace(r.FormValue("number")))
-	if idStr == "" || number == "" {
-		http.Error(w, "id and number required", http.StatusBadRequest)
-		return
-	}
-	id, err := strconv.ParseInt(idStr, 10, 64)
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
-		http.Error(w, "invalid id", http.StatusBadRequest)
+		writeError(w, 400, "invalid id")
 		return
 	}
+	var req struct {
+		Number string `json:"number"`
+	}
+	_ = readJSON(r, &req)
+	number := strings.ToUpper(strings.TrimSpace(req.Number))
 	if err := h.executor.Unlink(r.Context(), number, id); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, 500, err.Error())
 		return
 	}
-	// Trigger rescan so source files re-enter Pending
 	if h.scanFn != nil {
-		h.scanFn()
+		go h.scanFn()
 	}
-	log.Printf("[library] unlinked %s, id=%d", number, id)
-	w.WriteHeader(http.StatusOK)
+	writeOK(w, map[string]string{"status": "unlinked"})
 }
 
 func (h *Handlers) DeleteOutput(w http.ResponseWriter, r *http.Request) {
-	idStr := strings.TrimSpace(r.PathValue("id"))
-	if idStr == "" {
-		http.Error(w, "invalid id", http.StatusBadRequest)
-		return
-	}
-	id, err := strconv.ParseInt(idStr, 10, 64)
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
-		http.Error(w, "invalid id", http.StatusBadRequest)
+		writeError(w, 400, "invalid id")
 		return
 	}
 	if err := h.store.DeleteOutput(r.Context(), id); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, 500, err.Error())
 		return
 	}
-	log.Printf("[library] deleted output id=%d", id)
-	w.WriteHeader(http.StatusOK)
+	writeOK(w, map[string]string{"status": "deleted"})
 }
 
-func (h *Handlers) Settings(w http.ResponseWriter, r *http.Request) {
-	renderPartial(w, "settings-modal", h.buildSettingsData(r.Context()))
+// ── Provider Configs ──
+
+func (h *Handlers) ListProviderConfigs(w http.ResponseWriter, r *http.Request) {
+	configs, err := h.store.ListProviderConfigs(r.Context())
+	if err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	writeOK(w, configs)
 }
 
-type SettingsData struct {
-	Settings  map[string]string
-	Providers []ProviderView
+func (h *Handlers) SetProviderConfig(w http.ResponseWriter, r *http.Request) {
+	prov := r.PathValue("provider")
+	var req map[string]any
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, 400, "invalid JSON")
+		return
+	}
+	raw, _ := encodeJSON(req)
+	if err := h.store.SetProviderConfig(r.Context(), prov, raw); err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	writeOK(w, map[string]string{"status": "saved"})
 }
 
-func (h *Handlers) buildSettingsData(ctx context.Context) SettingsData {
-	settings, _ := h.store.GetAllSettings(ctx)
-	if settings == nil {
-		settings = map[string]string{}
-	}
-	settings["input_dir"] = config.ResolveSetting(settings["input_dir"], config.EnvInputDir, "/input")
-	settings["output_dir"] = config.ResolveSetting(settings["output_dir"], config.EnvOutputDir, "/output")
-	settings["aria2_rpc_url"] = config.ResolveSetting(settings["aria2_rpc_url"], config.EnvAria2RPCURL, "")
-	settings["aria2_token"] = config.ResolveSetting(settings["aria2_token"], config.EnvAria2Token, "")
-	if settings["provider_order"] == "" {
-		settings["provider_order"] = "avwiki,dmm"
-	}
-	if settings["provider_enabled_avwiki"] == "" {
-		settings["provider_enabled_avwiki"] = "true"
-	}
-	if settings["provider_enabled_dmm"] == "" {
-		settings["provider_enabled_dmm"] = "true"
-	}
-	if settings["link_path_pattern"] == "" {
-		settings["link_path_pattern"] = "{Number}"
-	}
-
-	// Build provider list in order
-	order := strings.Split(settings["provider_order"], ",")
-	allProviders := map[string]string{"avwiki": "AVWiki", "dmm": "DMM"}
-	var providers []ProviderView
-	seen := map[string]bool{}
-	for _, id := range order {
-		id = strings.TrimSpace(strings.ToLower(id))
-		if name, ok := allProviders[id]; ok {
-			providers = append(providers, ProviderView{
-				ID:      id,
-				Name:    name,
-				Enabled: settings["provider_enabled_"+id] != "false",
-			})
-			seen[id] = true
-		}
-	}
-	// Add any missing providers at the end
-	for id, name := range allProviders {
-		if !seen[id] {
-			providers = append(providers, ProviderView{
-				ID:      id,
-				Name:    name,
-				Enabled: settings["provider_enabled_"+id] != "false",
-			})
-		}
-	}
-
-	return SettingsData{Settings: settings, Providers: providers}
-}
-
-func (h *Handlers) SaveSettings(w http.ResponseWriter, r *http.Request) {
+func (h *Handlers) TestProviderConfig(w http.ResponseWriter, r *http.Request) {
+	prov := r.PathValue("provider")
 	ctx := r.Context()
-	_ = r.ParseForm()
-	keys := []string{
-		"input_dir", "output_dir", "aria2_rpc_url", "aria2_token",
-		"provider_order", "dmm_api_id", "dmm_affiliate_id",
-		"link_path_pattern",
-	}
-	for _, key := range keys {
-		if err := h.store.SetSetting(ctx, key, strings.TrimSpace(r.FormValue(key))); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+
+	switch prov {
+	case "dmm":
+		cfgStr, _ := h.store.GetProviderConfig(ctx, "dmm")
+		var cfg struct {
+			APIID       string `json:"api_id"`
+			AffiliateID string `json:"affiliate_id"`
+		}
+		_ = decodeJSON(cfgStr, &cfg)
+		if cfg.APIID == "" || cfg.AffiliateID == "" {
+			writeError(w, 400, "DMM API ID and Affiliate ID required")
 			return
 		}
-	}
-	avwikiEnabled := "false"
-	if r.FormValue("provider_enabled_avwiki") != "" {
-		avwikiEnabled = "true"
-	}
-	dmmEnabled := "false"
-	if r.FormValue("provider_enabled_dmm") != "" {
-		dmmEnabled = "true"
-	}
-	if err := h.store.SetSetting(ctx, "provider_enabled_avwiki", avwikiEnabled); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if err := h.store.SetSetting(ctx, "provider_enabled_dmm", dmmEnabled); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	log.Printf("[settings] saved")
-	w.WriteHeader(http.StatusNoContent)
-}
+		p := provider.NewDMM(cfg.APIID, cfg.AffiliateID)
+		_, err := p.Scrape(ctx, provider.Predict{Number: "SIVR-476"})
+		if err != nil {
+			writeError(w, 400, err.Error())
+			return
+		}
+		writeOK(w, map[string]string{"status": "ok"})
 
-func (h *Handlers) buildDashboardData(ctx context.Context) DashboardData {
-	groups := h.staging.ListGroups()
-	unknowns := h.staging.ListUnknowns()
-	outputs, _ := h.store.ListAllOutputs(ctx)
-	settings, _ := h.store.GetAllSettings(ctx)
-	inputDir := config.ResolveSetting(settings["input_dir"], config.EnvInputDir, "/input")
+	case "aria2":
+		// TODO: test aria2 connection
+		writeOK(w, map[string]string{"status": "ok"})
 
-	pending := make([]GroupView, 0, len(groups))
-	for _, g := range groups {
-		pending = append(pending, h.buildGroupView(g))
-	}
-	unk := make([]UnknownView, 0, len(unknowns))
-	for _, u := range unknowns {
-		unk = append(unk, UnknownView{
-			DOMID:    domID(u.Path),
-			Path:     u.Path,
-			Filename: u.Filename,
-			SizeGB:   float64(u.Size) / (1024.0 * 1024 * 1024),
-		})
-	}
-	lib := make([]LibraryView, 0, len(outputs))
-	metaCache := map[string]*committed.Metadata{}
-	for _, o := range outputs {
-		lv := LibraryView{ID: o.ID, Number: o.Number, SrcPath: o.SrcPath, LinkPath: o.LinkPath, LinkType: o.LinkType, Alive: o.Alive}
-		meta, ok := metaCache[o.Number]
-		if !ok {
-			meta, _ = h.store.GetMetadata(ctx, o.Number)
-			metaCache[o.Number] = meta
-		}
-		if meta != nil {
-			lv.Title = meta.Title
-			lv.Actors = meta.Actors
-			lv.CoverURL = meta.CoverURL
-			lv.Provider = meta.Provider
-			lv.Rating = meta.Rating
-			lv.ReviewCount = meta.ReviewCount
-			lv.PageURL = meta.PageURL
-			lv.Runtime = meta.Runtime
-			lv.Genres = splitCSV(meta.Genres)
-			lv.SampleImages = splitCSV(meta.SampleImages)
-			parts := []string{}
-			if meta.Premiered != "" {
-				parts = append(parts, meta.Premiered)
-			}
-			if meta.Maker != "" {
-				parts = append(parts, meta.Maker)
-			}
-			if meta.Label != "" {
-				parts = append(parts, meta.Label)
-			}
-			if meta.Runtime != "" {
-				parts = append(parts, meta.Runtime+"min")
-			}
-			lv.MetaLine = strings.Join(parts, " | ")
-		}
-		// Check for pending rescrape
-		if val, ok := h.libRescrape.Load(o.Number); ok {
-			rs := val.(*LibRescrapeResult)
-			lv.RescrapeStatus = rs.Status
-			if rs.New != nil {
-				lv.NewTitle = rs.New.Title
-				lv.NewCoverURL = rs.New.CoverURL
-				lv.NewProvider = rs.New.Provider
-				lv.NewActors = strings.Join(rs.New.Actors, ", ")
-				np := []string{}
-				if rs.New.Premiered != "" {
-					np = append(np, rs.New.Premiered)
-				}
-				if rs.New.Maker != "" {
-					np = append(np, rs.New.Maker)
-				}
-				if rs.New.Label != "" {
-					np = append(np, rs.New.Label)
-				}
-				lv.NewMetaLine = strings.Join(np, " | ")
-			}
-			if rs.Errors != nil {
-				ep := make([]string, 0, len(rs.Errors))
-				for k, v := range rs.Errors {
-					ep = append(ep, k+": "+v)
-				}
-				lv.RescrapeErrors = strings.Join(ep, "; ")
-			}
-		}
-		lib = append(lib, lv)
-	}
-
-	aria2Enabled := h.aria2 != nil
-	aria2Connected := aria2Enabled && h.aria2.Connected()
-
-	mkvmergePath := ""
-	if p, err := exec.LookPath("mkvmerge"); err == nil {
-		mkvmergePath = p
-	}
-
-	linkable := 0
-	for _, gv := range pending {
-		if gv.Scrape.Status == "success" && gv.AllReady && gv.Task == "" {
-			linkable++
-		}
-	}
-
-	return DashboardData{Pending: pending, Unknown: unk, Library: lib, LinkableCount: linkable, InputDir: inputDir, Aria2Enabled: aria2Enabled, Aria2Connected: aria2Connected, MkvmergePath: mkvmergePath}
-}
-
-func (h *Handlers) buildGroupView(g staging.StagingGroup) GroupView {
-	gv := GroupView{DOMID: domID(g.Number), Number: g.Number, Scrape: g.Scrape, Task: g.Task, TaskErr: g.TaskErr, TaskProgress: g.TaskProgress}
-	var totalSize int64
-	for _, item := range g.Items {
-		totalSize += item.File.Size
-		iv := ItemView{
-			Path:       item.File.Path,
-			Filename:   item.File.Filename,
-			Part:       item.Parsed.Part,
-			SizeGB:     float64(item.File.Size) / (1024.0 * 1024 * 1024),
-			Ready:      item.File.Ready,
-			Number:     item.Parsed.Number,
-			SourceSite: item.Parsed.SourceSite,
-			Tags:       strings.Join(item.Parsed.Tags, ","),
-		}
-		if m := item.File.Media; m != nil {
-			iv.Resolution = m.Resolution()
-			iv.VideoCodec = m.VideoCodec
-			iv.AudioCodec = m.AudioCodec
-			if m.AudioChannels > 0 {
-				iv.AudioCodec = fmt.Sprintf("%s %dch", m.AudioCodec, m.AudioChannels)
-			}
-			iv.Bitrate = m.BitrateText()
-			iv.Duration = m.DurationText()
-		}
-		if !item.File.Ready {
-			iv.DownloadPct = item.File.DownloadPct
-			iv.DownloadStatus = item.File.DownloadStatus
-		}
-		gv.Items = append(gv.Items, iv)
-	}
-	gv.ParsedCount = len(g.Items)
-	gv.TotalSizeGB = float64(totalSize) / (1024.0 * 1024 * 1024)
-	gv.AllReady = true
-	for _, item := range g.Items {
-		if !item.File.Ready {
-			gv.AllReady = false
-			break
-		}
-	}
-
-	// Unified progress for card background
-	if g.Task == "merging" && g.TaskProgress > 0 {
-		gv.Progress = g.TaskProgress
-	} else if !gv.AllReady {
-		// Average download progress across not-ready files
-		var total, count int
-		for _, item := range g.Items {
-			if !item.File.Ready {
-				total += item.File.DownloadPct
-				count++
-			}
-		}
-		if count > 0 {
-			gv.Progress = total / count
-		}
-	}
-
-	// State class for left border color
-	switch {
-	case g.Task == "merging":
-		gv.StateClass = "state-merging"
-	case g.Task == "linking":
-		gv.StateClass = "state-merging"
-	case g.Task == "error":
-		gv.StateClass = "state-error"
-	case !gv.AllReady:
-		// Check if any file is paused
-		paused := false
-		for _, item := range g.Items {
-			if item.File.DownloadStatus == "paused" {
-				paused = true
-				break
-			}
-		}
-		if paused {
-			gv.StateClass = "state-paused"
-		} else {
-			gv.StateClass = "state-downloading"
-		}
-	case g.Scrape.Status == "scraping":
-		gv.StateClass = "state-scraping"
-	case g.Scrape.Status == "failed":
-		gv.StateClass = "state-error"
-	case g.Scrape.Status == "success":
-		gv.StateClass = "state-ready"
 	default:
-		gv.StateClass = "state-scraping"
+		writeError(w, 400, "unknown provider")
 	}
-
-	if g.Scrape.Meta != nil {
-		m := g.Scrape.Meta
-		gv.MetaTitle = m.Title
-		parts := []string{}
-		if m.Premiered != "" {
-			parts = append(parts, m.Premiered)
-		}
-		if m.Maker != "" {
-			parts = append(parts, m.Maker)
-		}
-		if m.Label != "" {
-			parts = append(parts, m.Label)
-		}
-		if m.Runtime != "" {
-			parts = append(parts, m.Runtime+"min")
-		}
-		gv.MetaLine = strings.Join(parts, " | ")
-		gv.MetaActors = strings.Join(m.Actors, ", ")
-		gv.Genres = m.Genres
-		gv.SampleImages = m.SampleImages
-		gv.Rating = m.Rating
-		gv.ReviewCount = m.ReviewCount
-		gv.PageURL = m.PageURL
-		gv.Runtime = m.Runtime
-	}
-	if len(g.Scrape.Errors) > 0 {
-		keys := make([]string, 0, len(g.Scrape.Errors))
-		for k := range g.Scrape.Errors {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		parts := make([]string, 0, len(keys))
-		for _, k := range keys {
-			parts = append(parts, k+": "+g.Scrape.Errors[k])
-		}
-		gv.ErrorText = strings.Join(parts, "; ")
-	}
-	return gv
 }
 
-var idSanitizer = regexp.MustCompile(`[^a-zA-Z0-9_-]+`)
+// ── Helpers ──
 
-func domID(s string) string {
-	out := idSanitizer.ReplaceAllString(strings.TrimSpace(s), "_")
-	if out == "" {
-		return "x"
-	}
-	return out
-}
-
-func splitCSV(s string) []string {
+func splitProviders(s string) []string {
 	if strings.TrimSpace(s) == "" {
 		return nil
 	}
-	raw := strings.Split(s, ",")
-	out := make([]string, 0, len(raw))
-	for _, p := range raw {
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
 		p = strings.TrimSpace(p)
 		if p != "" {
 			out = append(out, p)
@@ -893,3 +757,4 @@ func splitCSV(s string) []string {
 	}
 	return out
 }
+
