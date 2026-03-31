@@ -1,21 +1,20 @@
 REGISTRY_URL ?= 192.168.0.110:5000
-IMAGE_NAME ?= bangou
 TAG ?= latest
 PLATFORM ?= linux/arm64
-IMAGE ?= $(REGISTRY_URL)/$(IMAGE_NAME):$(TAG)
+API_IMAGE ?= $(REGISTRY_URL)/bangou-api:$(TAG)
+WEB_IMAGE ?= $(REGISTRY_URL)/bangou-web:$(TAG)
 
-.PHONY: help test build run frontend dev docker-build docker-push release compose-up compose-down clean
+.PHONY: help test build run dev docker-build docker-push release compose-up compose-down clean
 
 help:
 	@echo "Targets:"
 	@echo "  make test          - Run Go tests"
-	@echo "  make build         - Build frontend + Go binary"
-	@echo "  make run           - Run app locally (serves built frontend)"
-	@echo "  make frontend      - Build frontend only"
-	@echo "  make dev           - Start Go backend + Vite dev server"
-	@echo "  make docker-build  - Build Docker image ($(IMAGE))"
-	@echo "  make docker-push   - Push Docker image ($(IMAGE))"
-	@echo "  make release       - Build and push image to registry"
+	@echo "  make build         - Build Go binary"
+	@echo "  make run           - Run Go API server locally"
+	@echo "  make dev           - Start Go API + Vite dev server"
+	@echo "  make docker-build  - Build Docker images (API + Web)"
+	@echo "  make docker-push   - Push Docker images"
+	@echo "  make release       - Build and push both images"
 	@echo "  make compose-up    - Start services with docker compose"
 	@echo "  make compose-down  - Stop services"
 	@echo "  make clean         - Remove build artifacts"
@@ -23,32 +22,31 @@ help:
 test:
 	go test ./checker/ ./committed/ ./executor/ ./parser/ ./provider/ ./scanner/ ./staging/ ./store/ ./web/
 
-frontend:
-	cd frontend && npm ci && npm run build
-
-build: frontend
+build:
 	go build -o bangou .
 
-run: build
-	./bangou --db ./bangou.db --listen :8080
+run:
+	go run . --db ./bangou.db --listen :8080
 
 dev:
-	@echo "Starting Go backend on :8080 and Vite dev server on :5173"
+	@echo "Go API on :8080, Vite on :5173 (proxy /api -> :8080)"
 	@echo "Open http://localhost:5173"
 	@go run . --db ./bangou.db --listen :8080 & \
 	cd frontend && npm run dev
 
 docker-build:
-	docker build --platform $(PLATFORM) -t $(IMAGE) .
+	docker build --platform $(PLATFORM) -t $(API_IMAGE) -f Dockerfile .
+	docker build --platform $(PLATFORM) -t $(WEB_IMAGE) -f Dockerfile.frontend .
 
 docker-push:
-	docker push $(IMAGE)
+	docker push $(API_IMAGE)
+	docker push $(WEB_IMAGE)
 
 release: docker-build docker-push
-	@echo "Released: $(IMAGE)"
+	@echo "Released: $(API_IMAGE) $(WEB_IMAGE)"
 
 compose-up:
-	IMAGE=$(IMAGE) docker compose up -d --build
+	API_IMAGE=$(API_IMAGE) WEB_IMAGE=$(WEB_IMAGE) docker compose up -d --build
 
 compose-down:
 	docker compose down
