@@ -1,14 +1,11 @@
 services:
-  bangou:
-    image: ${IMAGE:-192.168.0.110:5000/bangou:latest}
+  bangou-api:
+    image: ${API_IMAGE:-192.168.0.110:5000/bangou-api:latest}
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: bangou
-    ports:
-      - "8080:8080"
+    container_name: bangou-api
     volumes:
-      # Mount parent directories so multiple pipelines can use sub-paths
       - /mnt/hd1/Download:/mnt/hd1/Download:rw
       - /mnt/hd1/Multimedia:/mnt/hd1/Multimedia:rw
       - ./data:/data
@@ -19,4 +16,16 @@ services:
     command:
       - --db=/data/bangou.db
       - --listen=:8080
+    restart: unless-stopped
+
+  bangou-web:
+    image: ${WEB_IMAGE:-192.168.0.110:5000/bangou-web:latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: bangou-web
+    ports:
+      - "8080:80"
+    depends_on:
+      - bangou-api
     restart: unless-stopped
