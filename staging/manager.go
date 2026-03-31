@@ -47,7 +47,7 @@ func (m *Manager) Ingest(f StagingFile) {
 	delete(m.unknowns, f.Path)
 	g, exists := m.groups[parsed.Number]
 	if !exists {
-		g = &StagingGroup{Number: parsed.Number}
+		g = &StagingGroup{Number: parsed.Number, RawNumber: parsed.RawNumber}
 		m.groups[parsed.Number] = g
 		trigger = parsed.Number
 	}
@@ -70,6 +70,7 @@ func (m *Manager) Ingest(f StagingFile) {
 		File: f,
 		Parsed: ParsedFile{
 			Number:     parsed.Number,
+			RawNumber:  parsed.RawNumber,
 			Part:       parsed.Part,
 			Tags:       append([]string(nil), parsed.Tags...),
 			SourceSite: parsed.SourceSite,
@@ -172,6 +173,15 @@ func (m *Manager) RemoveGroup(number string) {
 		delete(m.fileIndex, item.File.Path)
 	}
 	delete(m.groups, number)
+}
+
+func (m *Manager) GetRawNumber(number string) string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if g, ok := m.groups[number]; ok {
+		return g.RawNumber
+	}
+	return ""
 }
 
 func (m *Manager) GetGroup(number string) *StagingGroup {

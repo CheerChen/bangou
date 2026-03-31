@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -29,10 +30,11 @@ func NewDMM(apiID, affiliateID string) *DMM {
 
 func (d *DMM) Name() string { return "dmm" }
 
-func (d *DMM) Scrape(ctx context.Context, number string) (*MovieMetadata, error) {
+func (d *DMM) Scrape(ctx context.Context, p Predict) (*MovieMetadata, error) {
 	if d.apiID == "" || d.affiliateID == "" {
 		return nil, fmt.Errorf("dmm not configured")
 	}
+	number := p.Number
 	label, num, err := splitNumber(number)
 	if err != nil {
 		return nil, err
@@ -42,6 +44,16 @@ func (d *DMM) Scrape(ctx context.Context, number string) (*MovieMetadata, error)
 		fmt.Sprintf("%s00%s", strings.ToLower(label), num),
 		fmt.Sprintf("%s%s", strings.ToLower(label), num),
 		number,
+	}
+	// Prepend RawNumber if it provides a distinct keyword (e.g. "13dsvr01801")
+	if p.RawNumber != "" {
+		seen := make(map[string]bool, len(keywords))
+		for _, kw := range keywords {
+			seen[strings.ToLower(kw)] = true
+		}
+		if !seen[p.RawNumber] {
+			keywords = append([]string{p.RawNumber}, keywords...)
+		}
 	}
 
 	for _, kw := range keywords {
@@ -66,6 +78,7 @@ func (d *DMM) searchOnce(ctx context.Context, keyword string) (*dmmItem, error) 
 	q.Set("output", "json")
 	u.RawQuery = q.Encode()
 
+	log.Printf("[dmm] GET keyword=%s", keyword)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
@@ -73,13 +86,14 @@ func (d *DMM) searchOnce(ctx context.Context, keyword string) (*dmmItem, error) 
 
 	resp, err := d.client.Do(req)
 	if err != nil {
+		log.Printf("[dmm] GET keyword=%s -> error: %v", keyword, err)
 		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		log.Printf("[dmm] GET keyword=%s -> HTTP %d", keyword, resp.StatusCode)
 		return nil, fmt.Errorf("http %d", resp.StatusCode)
 	}
-
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
@@ -89,8 +103,10 @@ func (d *DMM) searchOnce(ctx context.Context, keyword string) (*dmmItem, error) 
 		return nil, err
 	}
 	if result.Result.Status != 200 || len(result.Result.Items) == 0 {
+		log.Printf("[dmm] GET keyword=%s -> 0 items", keyword)
 		return nil, nil
 	}
+	log.Printf("[dmm] GET keyword=%s -> %d items", keyword, len(result.Result.Items))
 	result.Result.Items[0].rawBody = body
 	return &result.Result.Items[0], nil
 }

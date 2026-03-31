@@ -13,9 +13,9 @@ type fakeProvider struct {
 }
 
 func (f fakeProvider) Name() string { return f.name }
-func (f fakeProvider) Scrape(ctx context.Context, number string) (*MovieMetadata, error) {
+func (f fakeProvider) Scrape(ctx context.Context, p Predict) (*MovieMetadata, error) {
 	_ = ctx
-	_ = number
+	_ = p
 	return f.meta, f.err
 }
 
@@ -23,7 +23,7 @@ func TestChain(t *testing.T) {
 	res := Chain(context.Background(), []Provider{
 		fakeProvider{name: "a", err: errors.New("failed")},
 		fakeProvider{name: "b", meta: &MovieMetadata{Number: "ABC-001", Title: "ok"}},
-	}, "ABC-001")
+	}, Predict{Number: "ABC-001"})
 	if res.Meta == nil {
 		t.Fatal("expected metadata")
 	}

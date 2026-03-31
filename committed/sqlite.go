@@ -36,7 +36,15 @@ func NewSQLite(dsn string) (*SQLiteStore, error) {
 		db.Close()
 		return nil, err
 	}
-	// v2 migration: add new metadata columns
+	// v2 migration: add src_path to outputs
+	if ok, _ := hasColumn(db, "outputs", "src_path"); !ok {
+		if _, err := db.Exec("ALTER TABLE outputs ADD COLUMN src_path TEXT NOT NULL DEFAULT ''"); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("migrate outputs.src_path: %w", err)
+		}
+	}
+
+	// v3 migration: add new metadata columns
 	newCols := []struct{ name, def string }{
 		{"sample_images", "TEXT NOT NULL DEFAULT ''"},
 		{"rating", "TEXT NOT NULL DEFAULT ''"},
@@ -59,9 +67,9 @@ func (s *SQLiteStore) Close() error { return s.db.Close() }
 
 func (s *SQLiteStore) CreateOutput(ctx context.Context, o *Output) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO outputs (number, link_path, link_type, alive, created_at, checked_at)
-		 VALUES (?, ?, ?, TRUE, ?, ?)`,
-		o.Number, o.LinkPath, o.LinkType, time.Now(), time.Now(),
+		`INSERT INTO outputs (number, src_path, link_path, link_type, alive, created_at, checked_at)
+		 VALUES (?, ?, ?, ?, TRUE, ?, ?)`,
+		o.Number, o.SrcPath, o.LinkPath, o.LinkType, time.Now(), time.Now(),
 	)
 	return err
 }
@@ -73,7 +81,7 @@ func (s *SQLiteStore) DeleteOutput(ctx context.Context, id int64) error {
 
 func (s *SQLiteStore) ListOutputsByNumber(ctx context.Context, number string) ([]Output, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, number, link_path, link_type, alive, created_at, checked_at
+		`SELECT id, number, src_path, link_path, link_type, alive, created_at, checked_at
 		 FROM outputs WHERE number = ? ORDER BY id DESC`,
 		number,
 	)
@@ -84,7 +92,7 @@ func (s *SQLiteStore) ListOutputsByNumber(ctx context.Context, number string) ([
 	var out []Output
 	for rows.Next() {
 		var o Output
-		if err := rows.Scan(&o.ID, &o.Number, &o.LinkPath, &o.LinkType, &o.Alive, &o.CreatedAt, &o.CheckedAt); err != nil {
+		if err := rows.Scan(&o.ID, &o.Number, &o.SrcPath, &o.LinkPath, &o.LinkType, &o.Alive, &o.CreatedAt, &o.CheckedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, o)
@@ -94,7 +102,7 @@ func (s *SQLiteStore) ListOutputsByNumber(ctx context.Context, number string) ([
 
 func (s *SQLiteStore) ListAllOutputs(ctx context.Context) ([]Output, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, number, link_path, link_type, alive, created_at, checked_at
+		`SELECT id, number, src_path, link_path, link_type, alive, created_at, checked_at
 		 FROM outputs ORDER BY created_at DESC`,
 	)
 	if err != nil {
@@ -104,7 +112,7 @@ func (s *SQLiteStore) ListAllOutputs(ctx context.Context) ([]Output, error) {
 	var out []Output
 	for rows.Next() {
 		var o Output
-		if err := rows.Scan(&o.ID, &o.Number, &o.LinkPath, &o.LinkType, &o.Alive, &o.CreatedAt, &o.CheckedAt); err != nil {
+		if err := rows.Scan(&o.ID, &o.Number, &o.SrcPath, &o.LinkPath, &o.LinkType, &o.Alive, &o.CreatedAt, &o.CheckedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, o)
@@ -120,9 +128,25 @@ func (s *SQLiteStore) SetOutputAlive(ctx context.Context, id int64, alive bool) 
 	return err
 }
 
+func (s *SQLiteStore) SetOutputLinkType(ctx context.Context, id int64, linkType string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE outputs SET link_type = ? WHERE id = ?`,
+		linkType, id,
+	)
+	return err
+}
+
+func (s *SQLiteStore) SetOutputSrcPath(ctx context.Context, id int64, srcPath string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE outputs SET src_path = ? WHERE id = ?`,
+		srcPath, id,
+	)
+	return err
+}
+
 func (s *SQLiteStore) ListOrphanedOutputs(ctx context.Context) ([]Output, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, number, link_path, link_type, alive, created_at, checked_at
+		`SELECT id, number, src_path, link_path, link_type, alive, created_at, checked_at
 		 FROM outputs WHERE alive = FALSE ORDER BY checked_at DESC`,
 	)
 	if err != nil {
@@ -132,7 +156,7 @@ func (s *SQLiteStore) ListOrphanedOutputs(ctx context.Context) ([]Output, error)
 	var out []Output
 	for rows.Next() {
 		var o Output
-		if err := rows.Scan(&o.ID, &o.Number, &o.LinkPath, &o.LinkType, &o.Alive, &o.CreatedAt, &o.CheckedAt); err != nil {
+		if err := rows.Scan(&o.ID, &o.Number, &o.SrcPath, &o.LinkPath, &o.LinkType, &o.Alive, &o.CreatedAt, &o.CheckedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, o)

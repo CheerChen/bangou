@@ -8,6 +8,8 @@ type Store interface {
 	ListOutputsByNumber(ctx context.Context, number string) ([]Output, error)
 	ListAllOutputs(ctx context.Context) ([]Output, error)
 	SetOutputAlive(ctx context.Context, id int64, alive bool) error
+	SetOutputLinkType(ctx context.Context, id int64, linkType string) error
+	SetOutputSrcPath(ctx context.Context, id int64, srcPath string) error
 	ListOrphanedOutputs(ctx context.Context) ([]Output, error)
 	IsCommitted(ctx context.Context, number string) (bool, error)
 

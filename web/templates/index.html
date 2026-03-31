@@ -103,7 +103,7 @@
                 {{range .Genres}}<span class="genre-tag">{{.}}</span>{{end}}
             </div>
             {{end}}
-            <div class="lib-path">{{.LinkType}} &rarr; <code>{{.LinkPath}}</code></div>
+            <div class="lib-path">{{.LinkType}}{{if .SrcPath}}: <code>{{.SrcPath}}</code>{{end}} &rarr; <code>{{.LinkPath}}</code></div>
             <div class="actions">
                 <button class="outline" hx-post="/api/library/{{.Number}}/rescrape" hx-swap="none">Rescrape</button>
                 <button class="secondary outline" hx-post="/api/outputs/{{.ID}}/unlink" hx-vals='{"number":"{{.Number}}"}' hx-swap="none" hx-confirm="Unlink {{.Number}}? This removes link, nfo, cover from output. Source files stay in input." hx-on::after-request="htmx.trigger('#dashboard-content','refresh')">Unlink</button>
@@ -144,6 +144,12 @@
     {{end}}
 
     {{if gt (len .Pending) 0}}
+    <div class="row" style="margin-bottom:1rem;">
+        <span></span>
+        <div id="link-all-progress">
+            <button class="outline" hx-post="/api/groups/link-all" hx-target="#link-all-progress" hx-swap="outerHTML">Link All ({{.LinkableCount}})</button>
+        </div>
+    </div>
     {{range .Pending}}
     {{template "group-card" .}}
     {{end}}

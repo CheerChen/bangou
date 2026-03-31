@@ -7,7 +7,7 @@ import (
 
 func TestDMMScrapeNotConfigured(t *testing.T) {
 	p := NewDMM("", "")
-	meta, err := p.Scrape(context.Background(), "ACHJ-057")
+	meta, err := p.Scrape(context.Background(), Predict{Number: "ACHJ-057"})
 	if err == nil || meta != nil {
 		t.Fatal("expected not configured error")
 	}
