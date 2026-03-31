@@ -2,15 +2,35 @@ package committed
 
 import "time"
 
+type Pipeline struct {
+	ID               int64
+	Name             string
+	InputDir         string
+	OutputDir        string
+	PathPattern      string
+	ArchiveDir       string
+	EnableMerge      bool
+	DownloadProvider string // "none" | "aria2"
+	ScrapeProviders  string // comma-separated ordered list, e.g. "dmm,avwiki"
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+}
+
+type ProviderConfig struct {
+	Provider string
+	Config   string // JSON blob
+}
+
 type Output struct {
-	ID        int64
-	Number    string
-	SrcPath   string
-	LinkPath  string
-	LinkType  string
-	Alive     bool
-	CreatedAt time.Time
-	CheckedAt time.Time
+	ID         int64
+	PipelineID int64
+	Number     string
+	SrcPath    string
+	LinkPath   string
+	LinkType   string
+	Alive      bool
+	CreatedAt  time.Time
+	CheckedAt  time.Time
 }
 
 type MergedPart struct {
@@ -22,6 +42,7 @@ type MergedPart struct {
 
 type Metadata struct {
 	ID           int64
+	PipelineID   int64
 	Number       string
 	Title        string
 	Plot         string
