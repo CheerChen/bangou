@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -21,12 +22,18 @@ type Executor struct {
 	outputDir string
 }
 
+// LinkOptions carries per-pipeline config for a link operation.
+type LinkOptions struct {
+	PipelineID  int64
+	PathPattern string
+	ArchiveDir  string // empty = skip archive
+}
+
 func New(store committed.Store, stg *staging.Manager, outputDir string) *Executor {
 	return &Executor{store: store, staging: stg, outputDir: outputDir}
 }
 
 // ResolveLinkPath expands a pattern like "{Year}/{Actor}/{Number}" using metadata.
-// Only {Year}, {Actor}, {Number} are supported. {Number} is always appended if missing.
 func ResolveLinkPath(pattern, number string, meta *provider.MovieMetadata) string {
 	if strings.TrimSpace(pattern) == "" {
 		return number
@@ -47,7 +54,6 @@ func ResolveLinkPath(pattern, number string, meta *provider.MovieMetadata) strin
 		"{Number}", sanitizePath(number),
 	)
 	result := r.Replace(pattern)
-	// Ensure number is always the last segment
 	if !strings.HasSuffix(result, number) {
 		result = filepath.Join(result, number)
 	}
@@ -59,7 +65,7 @@ func sanitizePath(s string) string {
 	return r.Replace(strings.TrimSpace(s))
 }
 
-func (e *Executor) Link(ctx context.Context, number string, selectedPaths []string) error {
+func (e *Executor) Link(ctx context.Context, number string, selectedPaths []string, opts ...LinkOptions) error {
 	log.Printf("[link] %s: start, %d files selected", number, len(selectedPaths))
 	group := e.staging.GetGroup(number)
 	if group == nil {
@@ -71,15 +77,37 @@ func (e *Executor) Link(ctx context.Context, number string, selectedPaths []stri
 		return fmt.Errorf("no matching files for %s", number)
 	}
 
-	// Resolve link path pattern
-	pattern, _ := e.store.GetSetting(ctx, "link_path_pattern")
+	// Resolve options
+	var opt LinkOptions
+	if len(opts) > 0 {
+		opt = opts[0]
+	}
+	pattern := opt.PathPattern
+	if pattern == "" {
+		pattern, _ = e.store.GetSetting(ctx, "link_path_pattern")
+	}
+
+	// Archive: move source files to archive dir before linking
+	if opt.ArchiveDir != "" {
+		for i, item := range selected {
+			archived, err := archiveFile(item.File.Path, opt.ArchiveDir)
+			if err != nil {
+				return fmt.Errorf("archive %s: %w", item.File.Filename, err)
+			}
+			log.Printf("[link] %s: archived %s -> %s", number, item.File.Path, archived)
+			// Update the path so linking uses the archived location
+			selected[i].File.Path = archived
+		}
+	}
+
 	relPath := ResolveLinkPath(pattern, number, group.Scrape.Meta)
 	outDir := filepath.Join(e.outputDir, relPath)
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return fmt.Errorf("mkdir %s: %w", outDir, err)
 	}
 
-	linkType := detectLinkType(filepath.Dir(selected[0].File.Path), e.outputDir)
+	srcDir := filepath.Dir(selected[0].File.Path)
+	linkType := detectLinkType(srcDir, e.outputDir)
 	multiPart := len(selected) > 1
 	log.Printf("[link] %s: linkType=%s multiPart=%v outDir=%s", number, linkType, multiPart, outDir)
 
@@ -90,23 +118,25 @@ func (e *Executor) Link(ctx context.Context, number string, selectedPaths []stri
 		if err != nil {
 			return fmt.Errorf("link part %d: %w", part, err)
 		}
-		if err := e.store.CreateOutput(ctx, &committed.Output{Number: number, SrcPath: item.File.Path, LinkPath: result.LinkPath, LinkType: result.LinkType}); err != nil {
+		if err := e.store.CreateOutput(ctx, &committed.Output{
+			PipelineID: opt.PipelineID,
+			Number:     number,
+			SrcPath:    item.File.Path,
+			LinkPath:   result.LinkPath,
+			LinkType:   result.LinkType,
+		}); err != nil {
 			return fmt.Errorf("store output: %w", err)
 		}
 		log.Printf("[link] %s: part %d %s %s -> %s", number, part, result.LinkType, item.File.Path, result.LinkPath)
 	}
 
-	e.writeMetadata(ctx, number, outDir, group.Scrape.Meta)
-	if group.Scrape.Meta != nil {
-		e.commitMetadata(ctx, number, group.Scrape.Meta)
-	}
+	e.writeMetadata(ctx, number, outDir, group.Scrape.Meta, opt.PipelineID)
 	e.staging.RemoveGroup(number)
 	log.Printf("[link] %s: done, %d files linked", number, len(selected))
 	return nil
 }
 
 // Merge combines selected parts into a single mkv in the same input directory.
-// Does not create output links or remove the group — user should Rescan and then Link.
 func (e *Executor) Merge(ctx context.Context, number string, selectedPaths []string) error {
 	log.Printf("[merge] %s: start, %d files selected", number, len(selectedPaths))
 	group := e.staging.GetGroup(number)
@@ -119,7 +149,6 @@ func (e *Executor) Merge(ctx context.Context, number string, selectedPaths []str
 		return fmt.Errorf("need 2+ files to merge %s", number)
 	}
 
-	// Output to same directory as source files
 	inputDir := filepath.Dir(selected[0].File.Path)
 	mergedPath := filepath.Join(inputDir, number+".mkv")
 
@@ -139,8 +168,7 @@ func (e *Executor) Merge(ctx context.Context, number string, selectedPaths []str
 	return nil
 }
 
-// Unlink removes link files, nfo, cover, and raw from the output directory (keeps the directory).
-// Deletes DB output and metadata records.
+// Unlink removes link files, nfo, cover, and raw from the output directory.
 func (e *Executor) Unlink(ctx context.Context, number string, outputID int64) error {
 	log.Printf("[unlink] %s: start", number)
 
@@ -167,7 +195,7 @@ func (e *Executor) Unlink(ctx context.Context, number string, outputID int64) er
 	return nil
 }
 
-func (e *Executor) writeMetadata(ctx context.Context, number, outDir string, meta *provider.MovieMetadata) {
+func (e *Executor) writeMetadata(ctx context.Context, number, outDir string, meta *provider.MovieMetadata, pipelineID int64) {
 	if meta == nil {
 		return
 	}
@@ -177,19 +205,19 @@ func (e *Executor) writeMetadata(ctx context.Context, number, outDir string, met
 	}
 	_ = provider.DownloadCover(ctx, meta.CoverURL, outDir, number)
 
-	// Write raw provider response for debugging
 	if len(meta.RawJSON) > 0 {
 		rawPath := filepath.Join(outDir, number+"-raw."+meta.Provider)
 		if err := os.WriteFile(rawPath, meta.RawJSON, 0o644); err != nil {
 			log.Printf("warn: write raw %s: %v", number, err)
-		} else {
-			log.Printf("[link] %s: raw response saved to %s", number, rawPath)
 		}
 	}
+
+	e.commitMetadata(ctx, number, meta, pipelineID)
 }
 
-func (e *Executor) commitMetadata(ctx context.Context, number string, meta *provider.MovieMetadata) {
+func (e *Executor) commitMetadata(ctx context.Context, number string, meta *provider.MovieMetadata, pipelineID int64) {
 	_ = e.store.UpsertMetadata(ctx, &committed.Metadata{
+		PipelineID:   pipelineID,
 		Number:       number,
 		Title:        meta.Title,
 		Plot:         meta.Plot,
@@ -210,6 +238,48 @@ func (e *Executor) commitMetadata(ctx context.Context, number string, meta *prov
 		ContentID:    meta.ContentID,
 		Provider:     meta.Provider,
 	})
+}
+
+// archiveFile moves a file from srcPath to archiveDir, preserving the filename.
+// Uses os.Rename for same-device moves, falls back to copy+delete for cross-device.
+func archiveFile(srcPath, archiveDir string) (string, error) {
+	if err := os.MkdirAll(archiveDir, 0o755); err != nil {
+		return "", fmt.Errorf("mkdir archive: %w", err)
+	}
+	dst := filepath.Join(archiveDir, filepath.Base(srcPath))
+
+	// Try rename first (instant if same device)
+	if err := os.Rename(srcPath, dst); err == nil {
+		return dst, nil
+	}
+
+	// Cross-device: copy then delete
+	log.Printf("[archive] cross-device move: %s -> %s", srcPath, dst)
+	src, err := os.Open(srcPath)
+	if err != nil {
+		return "", err
+	}
+	defer src.Close()
+
+	dstFile, err := os.Create(dst)
+	if err != nil {
+		return "", err
+	}
+	defer dstFile.Close()
+
+	if _, err := io.Copy(dstFile, src); err != nil {
+		os.Remove(dst)
+		return "", fmt.Errorf("copy: %w", err)
+	}
+	if err := dstFile.Close(); err != nil {
+		os.Remove(dst)
+		return "", err
+	}
+	src.Close()
+	if err := os.Remove(srcPath); err != nil {
+		log.Printf("[archive] warn: remove source after copy: %v", err)
+	}
+	return dst, nil
 }
 
 func filterItems(items []staging.StagedItem, paths []string) []staging.StagedItem {

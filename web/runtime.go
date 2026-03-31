@@ -332,6 +332,15 @@ func (reg *Registry) SetupAria2(ctx context.Context, store committed.Store) {
 	go aria2.Run(ctx)
 }
 
+// LinkOpts returns the LinkOptions for this pipeline.
+func (rt *PipelineRuntime) LinkOpts() executor.LinkOptions {
+	return executor.LinkOptions{
+		PipelineID:  rt.Pipeline.ID,
+		PathPattern: rt.Pipeline.PathPattern,
+		ArchiveDir:  rt.Pipeline.ArchiveDir,
+	}
+}
+
 // ── Helpers ──
 
 func metadataToMovie(m *committed.Metadata) *provider.MovieMetadata {
