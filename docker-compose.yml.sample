@@ -5,33 +5,25 @@ services:
     ports:
       - "8890:8080"
     volumes:
-      - /mnt/hd1/Download/VR:/mnt/hd1/Download/VR:rw
-      - /mnt/hd1/Multimedia/VR:/mnt/hd1/Multimedia/VR:rw
+      # Mount parent directories — pipelines reference sub-paths within these
+      # e.g. Pipeline "VR":  scan=/mnt/hd1/Download/VR  link=/mnt/hd1/Multimedia/VR
+      #      Pipeline "JAV": scan=/mnt/hd1/Download/JAV  link=/mnt/hd1/Multimedia/JAV
+      - /mnt/hd1/Download:/mnt/hd1/Download:rw
+      - /mnt/hd1/Multimedia:/mnt/hd1/Multimedia:rw
       - /opt/bangou:/data
     environment:
       - PUID=1000
       - PGID=1000
       - TZ=Asia/Tokyo
-      - BANGOU_INPUT_DIR=/mnt/hd1/Download/VR
-      - BANGOU_OUTPUT_DIR=/mnt/hd1/Multimedia/VR
-      - BANGOU_ARIA2_RPC_URL=${BANGOU_ARIA2_RPC_URL:-}
-      - BANGOU_ARIA2_TOKEN=${BANGOU_ARIA2_TOKEN:-}
     command:
       - --db=/data/bangou.db
       - --listen=:8080
     restart: unless-stopped
 
-# Optional reference block: standalone mkvtoolnix container.
-# Not needed when bangou image already includes mkvmerge.
+# Pipeline configuration is done via the web UI after first start.
+# 1. Open http://<host>:8890
+# 2. Click "New Pipeline" to create pipelines (VR, JAV, etc.)
+# 3. Configure provider credentials (DMM API, aria2) in the wizard
 #
-# services:
-#   mkvtoolnix:
-#     restart: always
-#     image: jlesage/mkvtoolnix
-#     container_name: mkvtoolnix
-#     ports:
-#       - "5800:5800"
-#     volumes:
-#       - /opt/mkvtoolnix:/config:rw
-#       - /opt/Download:/storage:rw
-#       - /mnt:/mnt:rw
+# No BANGOU_INPUT_DIR / BANGOU_OUTPUT_DIR env vars needed in v2 —
+# each pipeline has its own scan/output directories.

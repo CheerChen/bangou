@@ -4,27 +4,39 @@ TAG ?= latest
 PLATFORM ?= linux/arm64
 IMAGE ?= $(REGISTRY_URL)/$(IMAGE_NAME):$(TAG)
 
-.PHONY: help test build run docker-build docker-push release compose-up compose-down
+.PHONY: help test build run frontend dev docker-build docker-push release compose-up compose-down clean
 
 help:
 	@echo "Targets:"
 	@echo "  make test          - Run Go tests"
-	@echo "  make build         - Build local binary"
-	@echo "  make run           - Run app locally"
+	@echo "  make build         - Build frontend + Go binary"
+	@echo "  make run           - Run app locally (serves built frontend)"
+	@echo "  make frontend      - Build frontend only"
+	@echo "  make dev           - Start Go backend + Vite dev server"
 	@echo "  make docker-build  - Build Docker image ($(IMAGE))"
 	@echo "  make docker-push   - Push Docker image ($(IMAGE))"
 	@echo "  make release       - Build and push image to registry"
 	@echo "  make compose-up    - Start services with docker compose"
 	@echo "  make compose-down  - Stop services"
+	@echo "  make clean         - Remove build artifacts"
 
 test:
-	go test ./...
+	go test ./checker/ ./committed/ ./executor/ ./parser/ ./provider/ ./scanner/ ./staging/ ./store/ ./web/
 
-build:
+frontend:
+	cd frontend && npm ci && npm run build
+
+build: frontend
 	go build -o bangou .
 
-run:
-	go run . --db ./bangou.db --listen :8080
+run: build
+	./bangou --db ./bangou.db --listen :8080
+
+dev:
+	@echo "Starting Go backend on :8080 and Vite dev server on :5173"
+	@echo "Open http://localhost:5173"
+	@go run . --db ./bangou.db --listen :8080 & \
+	cd frontend && npm run dev
 
 docker-build:
 	docker build --platform $(PLATFORM) -t $(IMAGE) .
@@ -40,3 +52,7 @@ compose-up:
 
 compose-down:
 	docker compose down
+
+clean:
+	rm -f bangou
+	rm -rf frontend/dist frontend/node_modules
