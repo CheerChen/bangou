@@ -47,3 +47,24 @@ CREATE TABLE IF NOT EXISTS metadata (
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 `
+
+const schemaV2 = `
+CREATE TABLE IF NOT EXISTS pipelines (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    name              TEXT NOT NULL,
+    input_dir         TEXT NOT NULL UNIQUE,
+    output_dir        TEXT NOT NULL,
+    path_pattern      TEXT NOT NULL DEFAULT '{Number}',
+    archive_dir       TEXT NOT NULL DEFAULT '',
+    enable_merge      BOOLEAN NOT NULL DEFAULT FALSE,
+    download_provider TEXT NOT NULL DEFAULT 'none',
+    scrape_providers  TEXT NOT NULL DEFAULT 'avwiki,dmm',
+    created_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS provider_configs (
+    provider TEXT PRIMARY KEY,
+    config   TEXT NOT NULL DEFAULT '{}'
+);
+`
