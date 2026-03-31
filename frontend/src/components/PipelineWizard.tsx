@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { ChevronLeft, ChevronRight, FolderOpen, Check, Settings2, CheckCircle, AlertCircle, Loader2, Download, Search, Archive, Merge, Link2 } from 'lucide-react'
 import Modal from './Modal'
+import * as api from '../api/client'
 
 const availableScrapers = ['avwiki', 'dmm']
 
@@ -71,8 +72,22 @@ export default function PipelineWizard({ onComplete, onCancel }: WizardProps) {
     }
   }
 
-  const testAria2 = () => { setAria2Test('testing'); setTimeout(() => setAria2Test(aria2Url ? 'ok' : 'fail'), 1000) }
-  const testDmm = () => { setDmmTest('testing'); setTimeout(() => setDmmTest(dmmApiId ? 'ok' : 'fail'), 1000) }
+  const testAria2 = async () => {
+    setAria2Test('testing')
+    try {
+      await api.setProviderConfig('aria2', { rpc_url: aria2Url, token: aria2Token })
+      await api.testProviderConfig('aria2')
+      setAria2Test('ok')
+    } catch { setAria2Test('fail') }
+  }
+  const testDmm = async () => {
+    setDmmTest('testing')
+    try {
+      await api.setProviderConfig('dmm', { api_id: dmmApiId, affiliate_id: dmmAffId })
+      await api.testProviderConfig('dmm')
+      setDmmTest('ok')
+    } catch { setDmmTest('fail') }
+  }
 
   const handleFinish = () => {
     onComplete({ name, inputDir, outputDir, pathPattern, archiveDir: enableArchive ? archiveDir : '', enableMerge, scrapers, downloadProvider })
