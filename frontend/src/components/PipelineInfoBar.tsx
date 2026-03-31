@@ -1,4 +1,4 @@
-import { Scan, Archive, Merge, Link2, Search, Download, ChevronRight, FolderOpen, CheckCircle, XCircle } from 'lucide-react'
+import { Scan, Archive, Link2, Search, Download, ChevronRight, FolderOpen, CheckCircle, XCircle } from 'lucide-react'
 import type { PipelineResponse } from '../api/client'
 
 interface Props {
