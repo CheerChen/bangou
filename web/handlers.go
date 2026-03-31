@@ -10,24 +10,19 @@ import (
 	"sync"
 
 	"github.com/CheerChen/bangou/committed"
-	"github.com/CheerChen/bangou/executor"
 	"github.com/CheerChen/bangou/provider"
 	"github.com/CheerChen/bangou/staging"
 )
 
 type Handlers struct {
-	staging     *staging.Manager
-	store       committed.Store
-	executor    *executor.Executor
-	scanFn      func()
-	rescrapeFn  func(string)
-	libScrapeFn func(string) (*provider.MovieMetadata, map[string]string)
-	aria2       Aria2Status
+	registry *Registry
+	store    committed.Store
 
 	libRescrape sync.Map // number -> *LibRescrapeResult
 
+	// per-pipeline link-all state
 	linkAllMu sync.Mutex
-	linkAll   *LinkAllStatus
+	linkAll   map[int64]*LinkAllStatus
 }
 
 type LinkAllStatus struct {
@@ -45,6 +40,19 @@ type LibRescrapeResult struct {
 	Errors map[string]string
 }
 
+// helper to resolve pipeline runtime from URL path
+func (h *Handlers) getRuntime(r *http.Request) (*PipelineRuntime, int64, error) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		return nil, 0, fmt.Errorf("invalid pipeline id")
+	}
+	rt := h.registry.Get(id)
+	if rt == nil {
+		return nil, id, fmt.Errorf("pipeline %d not found", id)
+	}
+	return rt, id, nil
+}
+
 // ── Pipelines ──
 
 type PipelineResponse struct {
@@ -59,7 +67,7 @@ type PipelineResponse struct {
 	ScrapeProviders  []string `json:"scrapeProviders"`
 	PendingCount     int      `json:"pendingCount"`
 	LibraryCount     int      `json:"libraryCount"`
-	Status           string   `json:"status"` // "idle", "scanning"
+	Status           string   `json:"status"`
 }
 
 func (h *Handlers) ListPipelines(w http.ResponseWriter, r *http.Request) {
@@ -72,21 +80,15 @@ func (h *Handlers) ListPipelines(w http.ResponseWriter, r *http.Request) {
 	out := make([]PipelineResponse, 0, len(pipes))
 	for _, p := range pipes {
 		_, libCount, _ := h.store.ListOutputsByPipeline(ctx, p.ID, 0, 0)
-		groups := h.staging.ListGroups()
-		unknowns := h.staging.ListUnknowns()
+		pending := 0
+		if rt := h.registry.Get(p.ID); rt != nil {
+			pending = len(rt.Manager.ListGroups()) + len(rt.Manager.ListUnknowns())
+		}
 		out = append(out, PipelineResponse{
-			ID:               p.ID,
-			Name:             p.Name,
-			InputDir:         p.InputDir,
-			OutputDir:        p.OutputDir,
-			PathPattern:      p.PathPattern,
-			ArchiveDir:       p.ArchiveDir,
-			EnableMerge:      p.EnableMerge,
-			DownloadProvider: p.DownloadProvider,
-			ScrapeProviders:  splitProviders(p.ScrapeProviders),
-			PendingCount:     len(groups) + len(unknowns),
-			LibraryCount:     libCount,
-			Status:           "idle",
+			ID: p.ID, Name: p.Name, InputDir: p.InputDir, OutputDir: p.OutputDir,
+			PathPattern: p.PathPattern, ArchiveDir: p.ArchiveDir, EnableMerge: p.EnableMerge,
+			DownloadProvider: p.DownloadProvider, ScrapeProviders: splitProviders(p.ScrapeProviders),
+			PendingCount: pending, LibraryCount: libCount, Status: "idle",
 		})
 	}
 	writeOK(w, out)
@@ -108,7 +110,7 @@ func (h *Handlers) CreatePipeline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Name == "" || req.InputDir == "" || req.OutputDir == "" {
-		writeError(w, 400, "name, inputDir, outputDir are required")
+		writeError(w, 400, "name, inputDir, outputDir required")
 		return
 	}
 	if req.PathPattern == "" {
@@ -119,14 +121,9 @@ func (h *Handlers) CreatePipeline(w http.ResponseWriter, r *http.Request) {
 	}
 
 	p := &committed.Pipeline{
-		Name:             req.Name,
-		InputDir:         req.InputDir,
-		OutputDir:        req.OutputDir,
-		PathPattern:      req.PathPattern,
-		ArchiveDir:       req.ArchiveDir,
-		EnableMerge:      req.EnableMerge,
-		DownloadProvider: req.DownloadProvider,
-		ScrapeProviders:  strings.Join(req.ScrapeProviders, ","),
+		Name: req.Name, InputDir: req.InputDir, OutputDir: req.OutputDir,
+		PathPattern: req.PathPattern, ArchiveDir: req.ArchiveDir, EnableMerge: req.EnableMerge,
+		DownloadProvider: req.DownloadProvider, ScrapeProviders: strings.Join(req.ScrapeProviders, ","),
 	}
 	id, err := h.store.CreatePipeline(r.Context(), p)
 	if err != nil {
@@ -137,6 +134,8 @@ func (h *Handlers) CreatePipeline(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, err.Error())
 		return
 	}
+	p.ID = id
+	_ = h.registry.StartPipeline(*p)
 	writeJSON(w, 201, map[string]int64{"id": id})
 }
 
@@ -146,6 +145,7 @@ func (h *Handlers) DeletePipeline(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "invalid id")
 		return
 	}
+	h.registry.StopPipeline(id)
 	if err := h.store.DeletePipeline(r.Context(), id); err != nil {
 		writeError(w, 500, err.Error())
 		return
@@ -153,17 +153,17 @@ func (h *Handlers) DeletePipeline(w http.ResponseWriter, r *http.Request) {
 	writeOK(w, map[string]string{"status": "deleted"})
 }
 
-// ── Groups (Pending) ──
+// ── Groups ──
 
 type GroupResponse struct {
-	Number       string            `json:"number"`
-	Items        []ItemResponse    `json:"items"`
-	TotalSizeGB  float64           `json:"totalSizeGB"`
-	Scrape       ScrapeResponse    `json:"scrape"`
-	Task         string            `json:"task"`
-	TaskErr      string            `json:"taskErr,omitempty"`
-	TaskProgress int               `json:"taskProgress"`
-	AllReady     bool              `json:"allReady"`
+	Number       string         `json:"number"`
+	Items        []ItemResponse `json:"items"`
+	TotalSizeGB  float64        `json:"totalSizeGB"`
+	Scrape       ScrapeResponse `json:"scrape"`
+	Task         string         `json:"task"`
+	TaskErr      string         `json:"taskErr,omitempty"`
+	TaskProgress int            `json:"taskProgress"`
+	AllReady     bool           `json:"allReady"`
 }
 
 type ItemResponse struct {
@@ -219,8 +219,13 @@ type GroupsPageResponse struct {
 }
 
 func (h *Handlers) ListGroups(w http.ResponseWriter, r *http.Request) {
-	groups := h.staging.ListGroups()
-	unknowns := h.staging.ListUnknowns()
+	rt, _, err := h.getRuntime(r)
+	if err != nil {
+		writeError(w, 404, err.Error())
+		return
+	}
+	groups := rt.Manager.ListGroups()
+	unknowns := rt.Manager.ListUnknowns()
 
 	grs := make([]GroupResponse, 0, len(groups))
 	linkable := 0
@@ -234,25 +239,13 @@ func (h *Handlers) ListGroups(w http.ResponseWriter, r *http.Request) {
 
 	urs := make([]UnknownResponse, 0, len(unknowns))
 	for _, u := range unknowns {
-		urs = append(urs, UnknownResponse{
-			Path:     u.Path,
-			Filename: u.Filename,
-			SizeGB:   float64(u.Size) / (1024 * 1024 * 1024),
-		})
+		urs = append(urs, UnknownResponse{Path: u.Path, Filename: u.Filename, SizeGB: float64(u.Size) / (1024 * 1024 * 1024)})
 	}
-
 	writeOK(w, GroupsPageResponse{Groups: grs, Unknowns: urs, Linkable: linkable})
 }
 
 func buildGroupResponse(g staging.StagingGroup) GroupResponse {
-	gr := GroupResponse{
-		Number:       g.Number,
-		Task:         g.Task,
-		TaskErr:      g.TaskErr,
-		TaskProgress: g.TaskProgress,
-		AllReady:     true,
-	}
-
+	gr := GroupResponse{Number: g.Number, Task: g.Task, TaskErr: g.TaskErr, TaskProgress: g.TaskProgress, AllReady: true}
 	var totalSize int64
 	items := make([]ItemResponse, 0, len(g.Items))
 	for _, item := range g.Items {
@@ -261,13 +254,9 @@ func buildGroupResponse(g staging.StagingGroup) GroupResponse {
 			gr.AllReady = false
 		}
 		ir := ItemResponse{
-			Path:           item.File.Path,
-			Filename:       item.File.Filename,
-			Part:           item.Parsed.Part,
-			SizeGB:         float64(item.File.Size) / (1024 * 1024 * 1024),
-			Ready:          item.File.Ready,
-			DownloadPct:    item.File.DownloadPct,
-			DownloadStatus: item.File.DownloadStatus,
+			Path: item.File.Path, Filename: item.File.Filename, Part: item.Parsed.Part,
+			SizeGB: float64(item.File.Size) / (1024 * 1024 * 1024), Ready: item.File.Ready,
+			DownloadPct: item.File.DownloadPct, DownloadStatus: item.File.DownloadStatus,
 		}
 		if item.File.Media != nil {
 			m := item.File.Media
@@ -281,30 +270,15 @@ func buildGroupResponse(g staging.StagingGroup) GroupResponse {
 	}
 	gr.Items = items
 	gr.TotalSizeGB = float64(totalSize) / (1024 * 1024 * 1024)
-
-	gr.Scrape = ScrapeResponse{
-		Errors: g.Scrape.Errors,
-		Status: g.Scrape.Status,
-	}
+	gr.Scrape = ScrapeResponse{Errors: g.Scrape.Errors, Status: g.Scrape.Status}
 	if g.Scrape.Meta != nil {
 		mm := g.Scrape.Meta
 		gr.Scrape.Meta = &MetaResponse{
-			Number:       mm.Number,
-			Title:        mm.Title,
-			Maker:        mm.Maker,
-			Label:        mm.Label,
-			Series:       mm.Series,
-			Actors:       mm.Actors,
-			Genres:       mm.Genres,
-			CoverURL:     mm.CoverURL,
-			SampleImages: mm.SampleImages,
-			Premiered:    mm.Premiered,
-			Year:         mm.Year,
-			Runtime:      mm.Runtime,
-			Rating:       mm.Rating,
-			ReviewCount:  mm.ReviewCount,
-			PageURL:      mm.PageURL,
-			Provider:     mm.Provider,
+			Number: mm.Number, Title: mm.Title, Maker: mm.Maker, Label: mm.Label,
+			Series: mm.Series, Actors: mm.Actors, Genres: mm.Genres, CoverURL: mm.CoverURL,
+			SampleImages: mm.SampleImages, Premiered: mm.Premiered, Year: mm.Year,
+			Runtime: mm.Runtime, Rating: mm.Rating, ReviewCount: mm.ReviewCount,
+			PageURL: mm.PageURL, Provider: mm.Provider,
 		}
 	}
 	return gr
@@ -313,6 +287,11 @@ func buildGroupResponse(g staging.StagingGroup) GroupResponse {
 // ── Group Actions ──
 
 func (h *Handlers) GroupLink(w http.ResponseWriter, r *http.Request) {
+	rt, _, err := h.getRuntime(r)
+	if err != nil {
+		writeError(w, 404, err.Error())
+		return
+	}
 	number := strings.ToUpper(strings.TrimSpace(r.PathValue("number")))
 	var req struct {
 		Paths []string `json:"paths"`
@@ -321,17 +300,22 @@ func (h *Handlers) GroupLink(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "paths required")
 		return
 	}
-	h.staging.SetTask(number, "linking", "")
+	rt.Manager.SetTask(number, "linking", "")
 	go func() {
-		if err := h.executor.Link(context.Background(), number, req.Paths); err != nil {
+		if err := rt.Executor.Link(context.Background(), number, req.Paths); err != nil {
 			log.Printf("[link] %s: error: %v", number, err)
-			h.staging.SetTask(number, "error", err.Error())
+			rt.Manager.SetTask(number, "error", err.Error())
 		}
 	}()
 	writeOK(w, map[string]string{"status": "linking"})
 }
 
 func (h *Handlers) GroupMerge(w http.ResponseWriter, r *http.Request) {
+	rt, _, err := h.getRuntime(r)
+	if err != nil {
+		writeError(w, 404, err.Error())
+		return
+	}
 	number := strings.ToUpper(strings.TrimSpace(r.PathValue("number")))
 	var req struct {
 		Paths []string `json:"paths"`
@@ -340,37 +324,47 @@ func (h *Handlers) GroupMerge(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "at least 2 paths required")
 		return
 	}
-	h.staging.SetTask(number, "merging", "")
+	rt.Manager.SetTask(number, "merging", "")
 	go func() {
-		if err := h.executor.Merge(context.Background(), number, req.Paths); err != nil {
+		if err := rt.Executor.Merge(context.Background(), number, req.Paths); err != nil {
 			log.Printf("[merge] %s: error: %v", number, err)
-			h.staging.SetTask(number, "error", err.Error())
+			rt.Manager.SetTask(number, "error", err.Error())
 			return
 		}
-		h.staging.SetTask(number, "", "")
-		if h.scanFn != nil {
-			h.scanFn()
-		}
+		rt.Manager.SetTask(number, "", "")
+		go rt.Scan(context.Background(), h.store)
 	}()
 	writeOK(w, map[string]string{"status": "merging"})
 }
 
 func (h *Handlers) GroupIgnore(w http.ResponseWriter, r *http.Request) {
+	rt, _, err := h.getRuntime(r)
+	if err != nil {
+		writeError(w, 404, err.Error())
+		return
+	}
 	number := strings.ToUpper(strings.TrimSpace(r.PathValue("number")))
-	h.staging.SetIgnored(number, true)
+	rt.Manager.SetIgnored(number, true)
 	writeOK(w, map[string]string{"status": "ignored"})
 }
 
 func (h *Handlers) GroupRescrape(w http.ResponseWriter, r *http.Request) {
-	number := strings.ToUpper(strings.TrimSpace(r.PathValue("number")))
-	h.staging.SetScrapeStatus(number, "scraping", map[string]string{})
-	if h.rescrapeFn != nil {
-		h.rescrapeFn(number)
+	rt, _, err := h.getRuntime(r)
+	if err != nil {
+		writeError(w, 404, err.Error())
+		return
 	}
+	number := strings.ToUpper(strings.TrimSpace(r.PathValue("number")))
+	rt.Rescrape(number)
 	writeOK(w, map[string]string{"status": "scraping"})
 }
 
 func (h *Handlers) ManualTag(w http.ResponseWriter, r *http.Request) {
+	rt, _, err := h.getRuntime(r)
+	if err != nil {
+		writeError(w, 404, err.Error())
+		return
+	}
 	number := strings.ToUpper(strings.TrimSpace(r.PathValue("number")))
 	var req struct {
 		Path string `json:"path"`
@@ -379,13 +373,18 @@ func (h *Handlers) ManualTag(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "path required")
 		return
 	}
-	h.staging.ManualTag(req.Path, number)
+	rt.Manager.ManualTag(req.Path, number)
 	writeOK(w, map[string]string{"status": "tagged"})
 }
 
-// ── Unknown File Actions ──
+// ── Unknown Actions ──
 
 func (h *Handlers) UnknownTag(w http.ResponseWriter, r *http.Request) {
+	rt, _, err := h.getRuntime(r)
+	if err != nil {
+		writeError(w, 404, err.Error())
+		return
+	}
 	var req struct {
 		Path   string `json:"path"`
 		Number string `json:"number"`
@@ -399,11 +398,16 @@ func (h *Handlers) UnknownTag(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "path and number required")
 		return
 	}
-	h.staging.ManualTag(req.Path, req.Number)
+	rt.Manager.ManualTag(req.Path, req.Number)
 	writeOK(w, map[string]string{"status": "tagged"})
 }
 
 func (h *Handlers) UnknownIgnore(w http.ResponseWriter, r *http.Request) {
+	rt, _, err := h.getRuntime(r)
+	if err != nil {
+		writeError(w, 404, err.Error())
+		return
+	}
 	var req struct {
 		Path string `json:"path"`
 	}
@@ -411,8 +415,116 @@ func (h *Handlers) UnknownIgnore(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "path required")
 		return
 	}
-	h.staging.SetUnknownIgnored(req.Path, true)
+	rt.Manager.SetUnknownIgnored(req.Path, true)
 	writeOK(w, map[string]string{"status": "ignored"})
+}
+
+// ── Scan / Link All ──
+
+func (h *Handlers) TriggerScan(w http.ResponseWriter, r *http.Request) {
+	rt, _, err := h.getRuntime(r)
+	if err != nil {
+		writeError(w, 404, err.Error())
+		return
+	}
+	go rt.Scan(context.Background(), h.store)
+	writeOK(w, map[string]string{"status": "scanning"})
+}
+
+func (h *Handlers) LinkAll(w http.ResponseWriter, r *http.Request) {
+	rt, pipeID, err := h.getRuntime(r)
+	if err != nil {
+		writeError(w, 404, err.Error())
+		return
+	}
+
+	h.linkAllMu.Lock()
+	if h.linkAll == nil {
+		h.linkAll = make(map[int64]*LinkAllStatus)
+	}
+	if s := h.linkAll[pipeID]; s != nil && s.Running {
+		h.linkAllMu.Unlock()
+		writeOK(w, s)
+		return
+	}
+
+	groups := rt.Manager.ListGroups()
+	var eligible []string
+	for _, g := range groups {
+		if g.Scrape.Status != "success" || g.Task != "" {
+			continue
+		}
+		allReady := true
+		for _, item := range g.Items {
+			if !item.File.Ready {
+				allReady = false
+				break
+			}
+		}
+		if allReady {
+			eligible = append(eligible, g.Number)
+		}
+	}
+	if len(eligible) == 0 {
+		h.linkAllMu.Unlock()
+		writeError(w, 400, "no eligible groups")
+		return
+	}
+
+	status := &LinkAllStatus{Total: len(eligible), Running: true}
+	h.linkAll[pipeID] = status
+	h.linkAllMu.Unlock()
+
+	go func() {
+		for i, number := range eligible {
+			h.linkAllMu.Lock()
+			status.Done = i
+			status.Current = number
+			h.linkAllMu.Unlock()
+
+			group := rt.Manager.GetGroup(number)
+			if group == nil {
+				continue
+			}
+			var paths []string
+			for _, item := range group.Items {
+				if item.File.Ready {
+					paths = append(paths, item.File.Path)
+				}
+			}
+			rt.Manager.SetTask(number, "linking", "")
+			if err := rt.Executor.Link(context.Background(), number, paths); err != nil {
+				log.Printf("[link-all] %s: error: %v", number, err)
+				rt.Manager.SetTask(number, "error", err.Error())
+				h.linkAllMu.Lock()
+				status.Errors = append(status.Errors, fmt.Sprintf("%s: %s", number, err.Error()))
+				h.linkAllMu.Unlock()
+			}
+		}
+		h.linkAllMu.Lock()
+		status.Done = len(eligible)
+		status.Current = ""
+		status.Running = false
+		h.linkAllMu.Unlock()
+	}()
+
+	writeOK(w, status)
+}
+
+func (h *Handlers) LinkAllProgress(w http.ResponseWriter, r *http.Request) {
+	_, pipeID, err := h.getRuntime(r)
+	if err != nil {
+		writeError(w, 404, err.Error())
+		return
+	}
+	h.linkAllMu.Lock()
+	s := h.linkAll[pipeID]
+	h.linkAllMu.Unlock()
+	if s == nil {
+		writeOK(w, map[string]any{"running": false})
+		return
+	}
+	writeOK(w, s)
 }
 
 // ── Library ──
@@ -502,97 +614,6 @@ func (h *Handlers) ListLibrary(w http.ResponseWriter, r *http.Request) {
 	writeOK(w, LibraryPageResponse{Items: items, Total: total, Page: page, Size: size})
 }
 
-// ── Scan / Link All ──
-
-func (h *Handlers) TriggerScan(w http.ResponseWriter, r *http.Request) {
-	if h.scanFn != nil {
-		go h.scanFn()
-	}
-	writeOK(w, map[string]string{"status": "scanning"})
-}
-
-func (h *Handlers) LinkAll(w http.ResponseWriter, r *http.Request) {
-	h.linkAllMu.Lock()
-	if h.linkAll != nil && h.linkAll.Running {
-		h.linkAllMu.Unlock()
-		writeOK(w, h.linkAll)
-		return
-	}
-
-	groups := h.staging.ListGroups()
-	var eligible []string
-	for _, g := range groups {
-		if g.Scrape.Status != "success" || g.Task != "" {
-			continue
-		}
-		allReady := true
-		for _, item := range g.Items {
-			if !item.File.Ready {
-				allReady = false
-				break
-			}
-		}
-		if allReady {
-			eligible = append(eligible, g.Number)
-		}
-	}
-
-	if len(eligible) == 0 {
-		h.linkAllMu.Unlock()
-		writeError(w, 400, "no eligible groups")
-		return
-	}
-
-	h.linkAll = &LinkAllStatus{Total: len(eligible), Running: true}
-	h.linkAllMu.Unlock()
-
-	go func() {
-		for i, number := range eligible {
-			h.linkAllMu.Lock()
-			h.linkAll.Done = i
-			h.linkAll.Current = number
-			h.linkAllMu.Unlock()
-
-			group := h.staging.GetGroup(number)
-			if group == nil {
-				continue
-			}
-			var paths []string
-			for _, item := range group.Items {
-				if item.File.Ready {
-					paths = append(paths, item.File.Path)
-				}
-			}
-			h.staging.SetTask(number, "linking", "")
-			if err := h.executor.Link(context.Background(), number, paths); err != nil {
-				log.Printf("[link-all] %s: error: %v", number, err)
-				h.staging.SetTask(number, "error", err.Error())
-				h.linkAllMu.Lock()
-				h.linkAll.Errors = append(h.linkAll.Errors, fmt.Sprintf("%s: %s", number, err.Error()))
-				h.linkAllMu.Unlock()
-			}
-		}
-		h.linkAllMu.Lock()
-		h.linkAll.Done = len(eligible)
-		h.linkAll.Current = ""
-		h.linkAll.Running = false
-		h.linkAllMu.Unlock()
-	}()
-
-	writeOK(w, h.linkAll)
-}
-
-func (h *Handlers) LinkAllProgress(w http.ResponseWriter, r *http.Request) {
-	h.linkAllMu.Lock()
-	s := h.linkAll
-	h.linkAllMu.Unlock()
-	if s == nil {
-		writeOK(w, map[string]any{"running": false})
-		return
-	}
-	writeOK(w, s)
-}
-
 // ── Library Rescrape ──
 
 func (h *Handlers) LibraryRescrape(w http.ResponseWriter, r *http.Request) {
@@ -601,8 +622,16 @@ func (h *Handlers) LibraryRescrape(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 409, "rescrape already in progress")
 		return
 	}
+	// Use first available runtime for scraping
+	runtimes := h.registry.All()
+	if len(runtimes) == 0 {
+		h.libRescrape.Delete(number)
+		writeError(w, 500, "no pipeline running")
+		return
+	}
+	rt := runtimes[0]
 	go func() {
-		meta, errs := h.libScrapeFn(number)
+		meta, errs := rt.LibScrapeFn(context.Background(), h.store, number)
 		if meta != nil {
 			old, _ := h.store.GetMetadata(context.Background(), number)
 			h.libRescrape.Store(number, &LibRescrapeResult{Status: "done", Old: old, New: meta, Errors: errs})
@@ -625,8 +654,7 @@ func (h *Handlers) LibraryRescrapeApply(w http.ResponseWriter, r *http.Request) 
 		writeError(w, 400, "rescrape not ready")
 		return
 	}
-	ctx := r.Context()
-	_ = h.store.UpsertMetadata(ctx, &committed.Metadata{
+	_ = h.store.UpsertMetadata(r.Context(), &committed.Metadata{
 		Number: number, Title: res.New.Title, Plot: res.New.Plot,
 		Director: res.New.Director, Maker: res.New.Maker, Label: res.New.Label,
 		Series: res.New.Series, Actors: strings.Join(res.New.Actors, ","),
@@ -659,14 +687,16 @@ func (h *Handlers) UnlinkOutput(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = readJSON(r, &req)
 	number := strings.ToUpper(strings.TrimSpace(req.Number))
-	if err := h.executor.Unlink(r.Context(), number, id); err != nil {
-		writeError(w, 500, err.Error())
-		return
+	// Find the runtime that owns this output to get the executor
+	runtimes := h.registry.All()
+	for _, rt := range runtimes {
+		if err := rt.Executor.Unlink(r.Context(), number, id); err == nil {
+			go rt.Scan(context.Background(), h.store)
+			writeOK(w, map[string]string{"status": "unlinked"})
+			return
+		}
 	}
-	if h.scanFn != nil {
-		go h.scanFn()
-	}
-	writeOK(w, map[string]string{"status": "unlinked"})
+	writeError(w, 500, "unlink failed")
 }
 
 func (h *Handlers) DeleteOutput(w http.ResponseWriter, r *http.Request) {
@@ -711,7 +741,6 @@ func (h *Handlers) SetProviderConfig(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) TestProviderConfig(w http.ResponseWriter, r *http.Request) {
 	prov := r.PathValue("provider")
 	ctx := r.Context()
-
 	switch prov {
 	case "dmm":
 		cfgStr, _ := h.store.GetProviderConfig(ctx, "dmm")
@@ -721,7 +750,7 @@ func (h *Handlers) TestProviderConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		_ = decodeJSON(cfgStr, &cfg)
 		if cfg.APIID == "" || cfg.AffiliateID == "" {
-			writeError(w, 400, "DMM API ID and Affiliate ID required")
+			writeError(w, 400, "API ID and Affiliate ID required")
 			return
 		}
 		p := provider.NewDMM(cfg.APIID, cfg.AffiliateID)
@@ -731,11 +760,8 @@ func (h *Handlers) TestProviderConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeOK(w, map[string]string{"status": "ok"})
-
 	case "aria2":
-		// TODO: test aria2 connection
 		writeOK(w, map[string]string{"status": "ok"})
-
 	default:
 		writeError(w, 400, "unknown provider")
 	}
@@ -757,4 +783,3 @@ func splitProviders(s string) []string {
 	}
 	return out
 }
-

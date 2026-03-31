@@ -5,18 +5,10 @@ import (
 	"net/http"
 
 	"github.com/CheerChen/bangou/committed"
-	"github.com/CheerChen/bangou/executor"
-	"github.com/CheerChen/bangou/provider"
-	"github.com/CheerChen/bangou/staging"
 )
 
-// Aria2Status provides aria2 connection state to the web layer.
-type Aria2Status interface {
-	Connected() bool
-}
-
-func NewServer(stg *staging.Manager, store committed.Store, exec *executor.Executor, scanFn func(), rescrapeFn func(string), libScrapeFn func(string) (*provider.MovieMetadata, map[string]string), aria2 Aria2Status) http.Handler {
-	h := &Handlers{staging: stg, store: store, executor: exec, scanFn: scanFn, rescrapeFn: rescrapeFn, libScrapeFn: libScrapeFn, aria2: aria2}
+func NewServer(reg *Registry, store committed.Store) http.Handler {
+	h := &Handlers{registry: reg, store: store}
 	mux := http.NewServeMux()
 
 	// Pipelines
@@ -31,16 +23,16 @@ func NewServer(stg *staging.Manager, store committed.Store, exec *executor.Execu
 	mux.HandleFunc("POST /api/pipelines/{id}/link-all", h.LinkAll)
 	mux.HandleFunc("GET /api/pipelines/{id}/link-all/progress", h.LinkAllProgress)
 
-	// Group actions
-	mux.HandleFunc("POST /api/groups/{number}/link", h.GroupLink)
-	mux.HandleFunc("POST /api/groups/{number}/merge", h.GroupMerge)
-	mux.HandleFunc("POST /api/groups/{number}/ignore", h.GroupIgnore)
-	mux.HandleFunc("POST /api/groups/{number}/rescrape", h.GroupRescrape)
-	mux.HandleFunc("POST /api/groups/{number}/tag", h.ManualTag)
+	// Group actions (pipeline resolved from group's number)
+	mux.HandleFunc("POST /api/pipelines/{id}/groups/{number}/link", h.GroupLink)
+	mux.HandleFunc("POST /api/pipelines/{id}/groups/{number}/merge", h.GroupMerge)
+	mux.HandleFunc("POST /api/pipelines/{id}/groups/{number}/ignore", h.GroupIgnore)
+	mux.HandleFunc("POST /api/pipelines/{id}/groups/{number}/rescrape", h.GroupRescrape)
+	mux.HandleFunc("POST /api/pipelines/{id}/groups/{number}/tag", h.ManualTag)
 
 	// Unknown file actions
-	mux.HandleFunc("POST /api/unknowns/tag", h.UnknownTag)
-	mux.HandleFunc("POST /api/unknowns/ignore", h.UnknownIgnore)
+	mux.HandleFunc("POST /api/pipelines/{id}/unknowns/tag", h.UnknownTag)
+	mux.HandleFunc("POST /api/pipelines/{id}/unknowns/ignore", h.UnknownIgnore)
 
 	// Library actions
 	mux.HandleFunc("POST /api/library/{number}/rescrape", h.LibraryRescrape)
