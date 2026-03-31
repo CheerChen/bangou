@@ -302,7 +302,7 @@ func (h *Handlers) GroupLink(w http.ResponseWriter, r *http.Request) {
 	}
 	rt.Manager.SetTask(number, "linking", "")
 	go func() {
-		if err := rt.Executor.Link(context.Background(), number, req.Paths); err != nil {
+		if err := rt.Executor.Link(context.Background(), number, req.Paths, rt.LinkOpts()); err != nil {
 			log.Printf("[link] %s: error: %v", number, err)
 			rt.Manager.SetTask(number, "error", err.Error())
 		}
@@ -493,7 +493,7 @@ func (h *Handlers) LinkAll(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			rt.Manager.SetTask(number, "linking", "")
-			if err := rt.Executor.Link(context.Background(), number, paths); err != nil {
+			if err := rt.Executor.Link(context.Background(), number, paths, rt.LinkOpts()); err != nil {
 				log.Printf("[link-all] %s: error: %v", number, err)
 				rt.Manager.SetTask(number, "error", err.Error())
 				h.linkAllMu.Lock()
