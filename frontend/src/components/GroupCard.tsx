@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react'
-import { ExternalLink, RefreshCw, Merge, Link2, EyeOff, FileVideo, Check, Download, HelpCircle, ChevronDown, ChevronUp, AlertTriangle, Tag, Layers } from 'lucide-react'
+import { ExternalLink, RefreshCw, Merge, Link2, FileVideo, Check, Download, HelpCircle, ChevronDown, ChevronUp, AlertTriangle, Tag, Layers } from 'lucide-react'
 import * as api from '../api/client'
 import type { GroupResponse } from '../api/client'
 import { useLightbox, type LightboxItem } from './Lightbox'
@@ -25,6 +25,9 @@ export default function GroupCard({ group, pipelineId, onAction }: Props) {
   const allReady = group.allReady
   const busy = group.task === 'merging' || group.task === 'linking'
   const canAct = allReady && !busy && group.scrape.status === 'success'
+  const groupHasMixedMkvMp4 = hasMixedMkvAndMp4(group.items)
+  const selectedExtCount = countSelectedExtensions(group.items, selected)
+  const canLinkSelection = canAct && selected.size > 0 && selectedExtCount === 1
   const totalGB = group.totalSizeGB
   const isFailed = group.scrape.status === 'failed'
   const isUnknownLike = isFailed || !meta
@@ -44,15 +47,13 @@ export default function GroupCard({ group, pipelineId, onAction }: Props) {
   const handleLink = async () => {
     const paths = [...selected]
     if (paths.length === 0) return
+    if (selectedExtCount !== 1) return
     try { await api.groupLink(pipelineId, group.number, paths); onAction() } catch (e: any) { alert(e.message) }
   }
   const handleMerge = async () => {
     const paths = [...selected]
     if (paths.length < 2) return
     try { await api.groupMerge(pipelineId, group.number, paths); onAction() } catch (e: any) { alert(e.message) }
-  }
-  const handleIgnore = async () => {
-    try { await api.groupIgnore(pipelineId, group.number); onAction() } catch { /* */ }
   }
   const handleRescrape = async () => {
     try { await api.groupRescrape(pipelineId, group.number); onAction() } catch { /* */ }
@@ -177,17 +178,19 @@ export default function GroupCard({ group, pipelineId, onAction }: Props) {
                 <button onClick={handleRescrape} className="flex items-center gap-1 text-xs px-2.5 py-1.5 text-gray-500 hover:text-white hover:bg-[#222] rounded-lg transition">
                   <RefreshCw size={12} />Rescrape
                 </button>
-                {group.items.length > 1 && allReady && (
+                {group.items.length > 1 && allReady && !groupHasMixedMkvMp4 && (
                   <button onClick={handleMerge} className="flex items-center gap-1 text-xs px-2.5 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-lg transition">
                     <Merge size={12} />Merge
                   </button>
                 )}
                 {canAct && (
-                  <button onClick={handleLink} className="flex items-center gap-1 text-xs px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition">
+                  <button onClick={handleLink} disabled={!canLinkSelection}
+                    className={`flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg transition ${
+                      canLinkSelection ? 'bg-indigo-600 hover:bg-indigo-500 text-white' : 'bg-gray-800 text-gray-500 cursor-not-allowed'
+                    }`}>
                     <Link2 size={12} />Link
                   </button>
                 )}
-                <button onClick={handleIgnore} className="p-1.5 text-gray-600 hover:text-red-400 rounded-lg transition"><EyeOff size={14} /></button>
               </>
             )}
           </div>
@@ -195,6 +198,35 @@ export default function GroupCard({ group, pipelineId, onAction }: Props) {
       </div>
     </div>
   )
+}
+
+function countSelectedExtensions(items: GroupResponse['items'], selected: Set<string>) {
+  const extSet = new Set<string>()
+  for (const item of items) {
+    if (!selected.has(item.path)) continue
+    const ext = getExt(item.filename || item.path)
+    if (ext) extSet.add(ext)
+    if (extSet.size > 1) return extSet.size
+  }
+  return extSet.size
+}
+
+function hasMixedMkvAndMp4(items: GroupResponse['items']) {
+  let hasMKV = false
+  let hasMP4 = false
+  for (const item of items) {
+    const ext = getExt(item.filename || item.path)
+    if (ext === '.mkv') hasMKV = true
+    if (ext === '.mp4') hasMP4 = true
+    if (hasMKV && hasMP4) return true
+  }
+  return false
+}
+
+function getExt(name: string) {
+  const idx = name.lastIndexOf('.')
+  if (idx < 0 || idx === name.length - 1) return ''
+  return name.slice(idx).toLowerCase()
 }
 
 function StatusPill({ task, scrape, allReady, progress }: { task: string; scrape: string; allReady: boolean; progress: number }) {

@@ -312,6 +312,24 @@ func (s *SQLiteStore) CreateOutput(ctx context.Context, o *Output) error {
 	return err
 }
 
+func (s *SQLiteStore) GetOutputByID(ctx context.Context, id int64) (*Output, error) {
+	row, err := s.db.QueryContext(ctx,
+		fmt.Sprintf(`SELECT %s FROM outputs WHERE id = ?`, outputCols), id,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer row.Close()
+	if !row.Next() {
+		return nil, sql.ErrNoRows
+	}
+	o, err := scanOutput(row)
+	if err != nil {
+		return nil, err
+	}
+	return &o, row.Err()
+}
+
 func (s *SQLiteStore) DeleteOutput(ctx context.Context, id int64) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM outputs WHERE id = ?`, id)
 	return err
@@ -327,6 +345,40 @@ func scanOutput(rows *sql.Rows) (Output, error) {
 	return o, err
 }
 
+func resolveOutputOrder(sort, order string) string {
+	dir := "DESC"
+	if order == "asc" {
+		dir = "ASC"
+	}
+	switch sort {
+	case "number":
+		return "o.number " + dir
+	case "date":
+		return "COALESCE(m.premiered, m.year, '') " + dir + ", o.created_at DESC"
+	case "rating":
+		return "CAST(COALESCE(NULLIF(m.rating,''),'0') AS REAL) " + dir + ", o.created_at DESC"
+	default: // "added"
+		return "o.created_at " + dir
+	}
+}
+
+func resolveOutputGroupOrder(sort, order string) string {
+	dir := "DESC"
+	if order == "asc" {
+		dir = "ASC"
+	}
+	switch sort {
+	case "number":
+		return "o.number " + dir
+	case "date":
+		return "COALESCE(MAX(m.premiered), MAX(m.year), '') " + dir + ", MAX(o.created_at) DESC"
+	case "rating":
+		return "CAST(COALESCE(NULLIF(MAX(m.rating),''),'0') AS REAL) " + dir + ", MAX(o.created_at) DESC"
+	default: // "added"
+		return "MAX(o.created_at) " + dir
+	}
+}
+
 func (s *SQLiteStore) ListOutputsByPipeline(ctx context.Context, pipelineID int64, limit, offset int, sort, order string) ([]Output, int, error) {
 	var total int
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM outputs WHERE pipeline_id = ?`, pipelineID).Scan(&total); err != nil {
@@ -336,22 +388,7 @@ func (s *SQLiteStore) ListOutputsByPipeline(ctx context.Context, pipelineID int6
 		return nil, total, nil
 	}
 
-	// Resolve sort column (LEFT JOIN metadata for number/year/rating)
-	orderClause := "o.created_at DESC"
-	dir := "DESC"
-	if order == "asc" {
-		dir = "ASC"
-	}
-	switch sort {
-	case "number":
-		orderClause = "o.number " + dir
-	case "date":
-		orderClause = "COALESCE(m.premiered, m.year, '') " + dir + ", o.created_at DESC"
-	case "rating":
-		orderClause = "CAST(COALESCE(NULLIF(m.rating,''),'0') AS REAL) " + dir + ", o.created_at DESC"
-	default: // "added"
-		orderClause = "o.created_at " + dir
-	}
+	orderClause := resolveOutputOrder(sort, order)
 
 	query := fmt.Sprintf(
 		`SELECT o.id, o.pipeline_id, o.number, o.src_path, o.link_path, o.link_type,
@@ -378,6 +415,86 @@ func (s *SQLiteStore) ListOutputsByPipeline(ctx context.Context, pipelineID int6
 		out = append(out, o)
 	}
 	return out, total, rows.Err()
+}
+
+func (s *SQLiteStore) ListOutputGroupsByPipeline(ctx context.Context, pipelineID int64, limit, offset int, sort, order string) ([]OutputGroup, int, error) {
+	var total int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(DISTINCT number) FROM outputs WHERE pipeline_id = ?`, pipelineID).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	if limit <= 0 {
+		return nil, total, nil
+	}
+
+	orderClause := resolveOutputGroupOrder(sort, order)
+	groupNumberQuery := fmt.Sprintf(
+		`SELECT o.number
+		 FROM outputs o
+		 LEFT JOIN metadata m ON o.number = m.number
+		 WHERE o.pipeline_id = ?
+		 GROUP BY o.number
+		 ORDER BY %s
+		 LIMIT ? OFFSET ?`, orderClause)
+
+	numberRows, err := s.db.QueryContext(ctx, groupNumberQuery, pipelineID, limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer numberRows.Close()
+
+	numbers := make([]string, 0, limit)
+	for numberRows.Next() {
+		var number string
+		if err := numberRows.Scan(&number); err != nil {
+			return nil, 0, err
+		}
+		numbers = append(numbers, number)
+	}
+	if err := numberRows.Err(); err != nil {
+		return nil, 0, err
+	}
+	if len(numbers) == 0 {
+		return []OutputGroup{}, total, nil
+	}
+
+	placeholders := strings.TrimRight(strings.Repeat("?,", len(numbers)), ",")
+	args := make([]any, 0, len(numbers)+1)
+	args = append(args, pipelineID)
+	for _, n := range numbers {
+		args = append(args, n)
+	}
+
+	outputQuery := fmt.Sprintf(
+		`SELECT %s
+		 FROM outputs
+		 WHERE pipeline_id = ? AND number IN (%s)
+		 ORDER BY created_at DESC, id DESC`, outputCols, placeholders)
+	rows, err := s.db.QueryContext(ctx, outputQuery, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	byNumber := make(map[string][]Output, len(numbers))
+	for rows.Next() {
+		o, err := scanOutput(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		byNumber[o.Number] = append(byNumber[o.Number], o)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+
+	groups := make([]OutputGroup, 0, len(numbers))
+	for _, number := range numbers {
+		groups = append(groups, OutputGroup{
+			Number:  number,
+			Outputs: byNumber[number],
+		})
+	}
+	return groups, total, nil
 }
 
 func (s *SQLiteStore) ListAllOutputs(ctx context.Context) ([]Output, error) {

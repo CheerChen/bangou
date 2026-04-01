@@ -2,6 +2,7 @@ package committed
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 )
 
@@ -101,6 +102,62 @@ func TestOutputsWithPipeline(t *testing.T) {
 	}
 	if outs[0].PipelineID != id {
 		t.Fatalf("pipeline_id: got %d want %d", outs[0].PipelineID, id)
+	}
+}
+
+func TestGetOutputByID(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	id, _ := s.CreatePipeline(ctx, &Pipeline{Name: "VR", InputDir: "/dl/vr", OutputDir: "/media/vr"})
+	if err := s.CreateOutput(ctx, &Output{PipelineID: id, Number: "ACHJ-057", LinkPath: "/out/a.mp4", LinkType: "hardlink"}); err != nil {
+		t.Fatal(err)
+	}
+
+	outs, _, err := s.ListOutputsByPipeline(ctx, id, 1, 0, "added", "desc")
+	if err != nil || len(outs) != 1 {
+		t.Fatalf("list outputs: err=%v len=%d", err, len(outs))
+	}
+
+	got, err := s.GetOutputByID(ctx, outs[0].ID)
+	if err != nil {
+		t.Fatalf("get output by id: %v", err)
+	}
+	if got.Number != "ACHJ-057" || got.LinkPath != "/out/a.mp4" {
+		t.Fatalf("unexpected output: %+v", got)
+	}
+
+	if _, err := s.GetOutputByID(ctx, 999999); err == nil {
+		t.Fatal("expected sql.ErrNoRows")
+	} else if err != sql.ErrNoRows {
+		t.Fatalf("unexpected err: %v", err)
+	}
+}
+
+func TestOutputGroupsByPipeline(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	id, _ := s.CreatePipeline(ctx, &Pipeline{Name: "VR", InputDir: "/dl/vr", OutputDir: "/media/vr"})
+	_ = s.CreateOutput(ctx, &Output{PipelineID: id, Number: "SIVR-296", LinkPath: "/out/SIVR-296-cd1.mp4", LinkType: "hardlink"})
+	_ = s.CreateOutput(ctx, &Output{PipelineID: id, Number: "SIVR-296", LinkPath: "/out/SIVR-296-cd2.mp4", LinkType: "hardlink"})
+	_ = s.CreateOutput(ctx, &Output{PipelineID: id, Number: "ACHJ-057", LinkPath: "/out/ACHJ-057.mp4", LinkType: "hardlink"})
+
+	groups, total, err := s.ListOutputGroupsByPipeline(ctx, id, 10, 0, "number", "asc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 2 {
+		t.Fatalf("total = %d, want 2", total)
+	}
+	if len(groups) != 2 {
+		t.Fatalf("len(groups) = %d, want 2", len(groups))
+	}
+	if groups[0].Number != "ACHJ-057" || len(groups[0].Outputs) != 1 {
+		t.Fatalf("group[0] = %+v", groups[0])
+	}
+	if groups[1].Number != "SIVR-296" || len(groups[1].Outputs) != 2 {
+		t.Fatalf("group[1] = %+v", groups[1])
 	}
 }
 

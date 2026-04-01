@@ -1,4 +1,4 @@
-import { HelpCircle, Tag, EyeOff } from 'lucide-react'
+import { HelpCircle, Tag } from 'lucide-react'
 import { useState } from 'react'
 import * as api from '../api/client'
 import type { UnknownResponse } from '../api/client'
@@ -15,10 +15,6 @@ export default function UnknownCard({ file, pipelineId, onAction }: Props) {
   const handleTag = async () => {
     if (!number.trim()) return
     try { await api.unknownTag(pipelineId, file.path, number.trim()); onAction() } catch { /* */ }
-  }
-
-  const handleIgnore = async () => {
-    try { await api.unknownIgnore(pipelineId, file.path); onAction() } catch { /* */ }
   }
 
   return (
@@ -39,9 +35,6 @@ export default function UnknownCard({ file, pipelineId, onAction }: Props) {
             className="flex-1 px-3 py-1.5 bg-[#111] border border-gray-700 rounded-lg text-white text-sm placeholder-gray-700 focus:border-indigo-500 focus:outline-none" />
           <button onClick={handleTag} className="flex items-center gap-1 text-xs px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition">
             <Tag size={12} />Tag
-          </button>
-          <button onClick={handleIgnore} className="p-1.5 text-gray-600 hover:text-red-400 rounded-lg transition" title="Ignore">
-            <EyeOff size={14} />
           </button>
         </div>
       </div>

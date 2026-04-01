@@ -6,11 +6,11 @@ import (
 )
 
 type StagingFile struct {
-	Path         string
-	Filename     string
-	Size         int64
-	Ready        bool
-	Media        *scanner.MediaInfo
+	Path           string
+	Filename       string
+	Size           int64
+	Ready          bool
+	Media          *scanner.MediaInfo
 	DownloadPct    int    // 0-100, from aria2
 	DownloadSize   int64  // bytes completed
 	DownloadStatus string // "active", "waiting", "paused", "complete", "removed", "error", ""
@@ -36,11 +36,10 @@ type ScrapeResult struct {
 }
 
 type StagingGroup struct {
-	Number    string
-	RawNumber string
-	Items     []StagedItem
-	Scrape    ScrapeResult
-	Ignored   bool
+	Number       string
+	RawNumber    string
+	Items        []StagedItem
+	Scrape       ScrapeResult
 	Task         string // "", "linking", "merging", "done", "error"
 	TaskErr      string
 	TaskProgress int // 0-100
@@ -48,5 +47,4 @@ type StagingGroup struct {
 
 type UnknownFile struct {
 	StagingFile
-	Ignored bool
 }

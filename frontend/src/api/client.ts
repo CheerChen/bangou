@@ -124,9 +124,6 @@ export const groupLink = (pipelineId: number, number: string, paths: string[]) =
 export const groupMerge = (pipelineId: number, number: string, paths: string[]) =>
   request<unknown>('POST', `/pipelines/${pipelineId}/groups/${number}/merge`, { paths })
 
-export const groupIgnore = (pipelineId: number, number: string) =>
-  request<unknown>('POST', `/pipelines/${pipelineId}/groups/${number}/ignore`, {})
-
 export const groupRescrape = (pipelineId: number, number: string) =>
   request<unknown>('POST', `/pipelines/${pipelineId}/groups/${number}/rescrape`, {})
 
@@ -137,9 +134,6 @@ export const groupTag = (pipelineId: number, number: string, path: string) =>
 
 export const unknownTag = (pipelineId: number, path: string, number: string) =>
   request<unknown>('POST', `/pipelines/${pipelineId}/unknowns/tag`, { path, number })
-
-export const unknownIgnore = (pipelineId: number, path: string) =>
-  request<unknown>('POST', `/pipelines/${pipelineId}/unknowns/ignore`, { path })
 
 // ── Scan / Link All ──
 
@@ -163,15 +157,14 @@ export const linkAllProgress = (pipelineId: number) =>
 // ── Library ──
 
 export interface LibraryPage {
-  items: LibraryItemResponse[]
+  items: LibraryGroupResponse[]
   total: number
   page: number
   size: number
 }
 
-export interface LibraryItemResponse {
+export interface LibraryOutputResponse {
   id: number
-  number: string
   srcPath: string
   linkPath: string
   linkType: string
@@ -182,6 +175,11 @@ export interface LibraryItemResponse {
   duration?: string
   bitrate?: string
   alive: boolean
+}
+
+export interface LibraryGroupResponse {
+  number: string
+  outputs: LibraryOutputResponse[]
   title?: string
   actors?: string
   genres?: string[]
@@ -213,9 +211,6 @@ export const libraryDismiss = (number: string) =>
 
 export const unlinkOutput = (id: number, number: string) =>
   request<unknown>('POST', `/outputs/${id}/unlink`, { number })
-
-export const deleteOutput = (id: number) =>
-  request<unknown>('DELETE', `/outputs/${id}`)
 
 // ── Provider Configs ──
 

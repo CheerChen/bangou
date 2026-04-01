@@ -1,11 +1,15 @@
 package executor
 
 import (
+	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/CheerChen/bangou/committed"
 	"github.com/CheerChen/bangou/provider"
+	"github.com/CheerChen/bangou/staging"
 )
 
 func TestLinkFile(t *testing.T) {
@@ -100,5 +104,140 @@ func TestMergeProgressFromSize(t *testing.T) {
 				t.Fatalf("mergeProgressFromSize(%d, %d) = %d, want %d", tc.currentSize, tc.totalSize, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestBuildMergeSourceTag(t *testing.T) {
+	t.Run("all without part", func(t *testing.T) {
+		selected := []staging.StagedItem{
+			{Parsed: staging.ParsedFile{Part: 0}},
+			{Parsed: staging.ParsedFile{Part: 0}},
+			{Parsed: staging.ParsedFile{Part: 0}},
+		}
+		got, err := buildMergeSourceTag(selected)
+		if err != nil {
+			t.Fatalf("unexpected err: %v", err)
+		}
+		if got != "m123" {
+			t.Fatalf("tag = %q, want %q", got, "m123")
+		}
+	})
+
+	t.Run("all with part", func(t *testing.T) {
+		selected := []staging.StagedItem{
+			{Parsed: staging.ParsedFile{Part: 1}},
+			{Parsed: staging.ParsedFile{Part: 3}},
+		}
+		got, err := buildMergeSourceTag(selected)
+		if err != nil {
+			t.Fatalf("unexpected err: %v", err)
+		}
+		if got != "m13" {
+			t.Fatalf("tag = %q, want %q", got, "m13")
+		}
+	})
+
+	t.Run("mixed part should fail", func(t *testing.T) {
+		selected := []staging.StagedItem{
+			{Parsed: staging.ParsedFile{Part: 2}},
+			{Parsed: staging.ParsedFile{Part: 0}},
+		}
+		if _, err := buildMergeSourceTag(selected); err == nil {
+			t.Fatal("expected error for mixed part selection")
+		}
+	})
+}
+
+func TestValidateSingleExtensionSelection(t *testing.T) {
+	t.Run("single extension", func(t *testing.T) {
+		selected := []staging.StagedItem{
+			{File: staging.StagingFile{Filename: "a.mp4"}},
+			{File: staging.StagingFile{Filename: "b.mp4"}},
+		}
+		if err := validateSingleExtensionSelection(selected); err != nil {
+			t.Fatalf("unexpected err: %v", err)
+		}
+	})
+
+	t.Run("mixed extension", func(t *testing.T) {
+		selected := []staging.StagedItem{
+			{File: staging.StagingFile{Filename: "a.mp4"}},
+			{File: staging.StagingFile{Filename: "b.mkv"}},
+		}
+		if err := validateSingleExtensionSelection(selected); err == nil {
+			t.Fatal("expected error for mixed extensions")
+		}
+	})
+}
+
+func TestHasMixedMKVAndMP4(t *testing.T) {
+	items := []staging.StagedItem{
+		{File: staging.StagingFile{Filename: "a.mp4"}},
+		{File: staging.StagingFile{Filename: "b.mkv"}},
+	}
+	if !hasMixedMKVAndMP4(items) {
+		t.Fatal("expected mixed mkv/mp4 to be true")
+	}
+
+	items = []staging.StagedItem{
+		{File: staging.StagingFile{Filename: "a.mp4"}},
+		{File: staging.StagingFile{Filename: "b.avi"}},
+	}
+	if hasMixedMKVAndMP4(items) {
+		t.Fatal("expected mixed mkv/mp4 to be false")
+	}
+}
+
+func TestUnlinkRemovesRecordedLinkPath(t *testing.T) {
+	ctx := context.Background()
+	store, err := committed.NewSQLite(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	outputDir := t.TempDir()
+	id, err := store.CreatePipeline(ctx, &committed.Pipeline{
+		Name: "VR", InputDir: t.TempDir(), OutputDir: outputDir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	linkDir := filepath.Join(t.TempDir(), "custom", "path")
+	if err := os.MkdirAll(linkDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	linkPath := filepath.Join(linkDir, "URVRSP-229-cd1.mp4")
+	if err := os.WriteFile(linkPath, []byte("linked"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.CreateOutput(ctx, &committed.Output{
+		PipelineID: id,
+		Number:     "URVRSP-229",
+		LinkPath:   linkPath,
+		LinkType:   "symlink",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	outs, _, err := store.ListOutputsByPipeline(ctx, id, 1, 0, "added", "desc")
+	if err != nil || len(outs) != 1 {
+		t.Fatalf("list outputs: err=%v len=%d", err, len(outs))
+	}
+
+	exec := New(store, staging.New(), outputDir)
+	if err := exec.Unlink(ctx, &outs[0]); err != nil {
+		t.Fatalf("unlink: %v", err)
+	}
+
+	if _, err := os.Stat(linkPath); !os.IsNotExist(err) {
+		t.Fatalf("expected link file removed, stat err=%v", err)
+	}
+	if _, err := store.GetOutputByID(ctx, outs[0].ID); err == nil {
+		t.Fatal("expected output record removed")
+	} else if err != sql.ErrNoRows {
+		t.Fatalf("unexpected get output err: %v", err)
 	}
 }

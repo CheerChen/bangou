@@ -26,20 +26,17 @@ func NewServer(reg *Registry, store committed.Store) http.Handler {
 	// Group actions
 	mux.HandleFunc("POST /api/pipelines/{id}/groups/{number}/link", h.GroupLink)
 	mux.HandleFunc("POST /api/pipelines/{id}/groups/{number}/merge", h.GroupMerge)
-	mux.HandleFunc("POST /api/pipelines/{id}/groups/{number}/ignore", h.GroupIgnore)
 	mux.HandleFunc("POST /api/pipelines/{id}/groups/{number}/rescrape", h.GroupRescrape)
 	mux.HandleFunc("POST /api/pipelines/{id}/groups/{number}/tag", h.ManualTag)
 
 	// Unknown file actions
 	mux.HandleFunc("POST /api/pipelines/{id}/unknowns/tag", h.UnknownTag)
-	mux.HandleFunc("POST /api/pipelines/{id}/unknowns/ignore", h.UnknownIgnore)
 
 	// Library actions
 	mux.HandleFunc("POST /api/library/{number}/rescrape", h.LibraryRescrape)
 	mux.HandleFunc("POST /api/library/{number}/apply", h.LibraryRescrapeApply)
 	mux.HandleFunc("POST /api/library/{number}/dismiss", h.LibraryRescrapeDismiss)
 	mux.HandleFunc("POST /api/outputs/{id}/unlink", h.UnlinkOutput)
-	mux.HandleFunc("DELETE /api/outputs/{id}", h.DeleteOutput)
 
 	// Provider configs
 	mux.HandleFunc("GET /api/provider-configs", h.ListProviderConfigs)

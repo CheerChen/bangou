@@ -1,45 +1,54 @@
-import { useRef } from 'react'
-import { ExternalLink, RefreshCw, Unlink, Trash2, CheckCircle, AlertCircle, Layers, FileVideo, Link2, Film } from 'lucide-react'
+import { useRef, useState } from 'react'
+import { ExternalLink, RefreshCw, Unlink, CheckCircle, AlertCircle, Layers, FileVideo, Link2, Film } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import * as api from '../api/client'
-import type { LibraryItemResponse } from '../api/client'
+import type { LibraryGroupResponse } from '../api/client'
 import { useLightbox, type LightboxItem } from './Lightbox'
+import Modal from './Modal'
 
 interface Props {
-  item: LibraryItemResponse
+  item: LibraryGroupResponse
   onAction: () => void
 }
 
 export default function LibraryCard({ item, onAction }: Props) {
   const lightbox = useLightbox()
   const imgRef = useRef<HTMLImageElement>(null)
+  const [showUnlinkConfirm, setShowUnlinkConfirm] = useState(false)
+  const [unlinking, setUnlinking] = useState(false)
+  const outputs = item.outputs || []
+  const allAlive = outputs.length > 0 && outputs.every((o) => o.alive)
+  const unlinkTargets = buildUnlinkTargets(item.number, outputs)
+
   const handleRescrape = async () => {
     try { await api.libraryRescrape(item.number) } catch { /* */ }
   }
-  const handleUnlink = async () => {
-    if (!confirm(`Unlink ${item.number}?`)) return
-    try { await api.unlinkOutput(item.id, item.number); onAction() } catch (e: any) { alert(e.message) }
+  const handleUnlink = () => {
+    if (outputs.length === 0) return
+    setShowUnlinkConfirm(true)
   }
-  const handleDelete = async () => {
-    if (!confirm(`Delete ${item.number} from library?`)) return
-    try { await api.deleteOutput(item.id); onAction() } catch (e: any) { alert(e.message) }
+  const handleUnlinkConfirm = async () => {
+    if (outputs.length === 0) return
+    setUnlinking(true)
+    try {
+      for (const output of outputs) {
+        await api.unlinkOutput(output.id, item.number)
+      }
+      setShowUnlinkConfirm(false)
+      onAction()
+    } catch (e: any) { alert(e.message) }
+    setUnlinking(false)
   }
-
-  const srcFilename = item.srcPath?.split('/').pop() || ''
-  const linkFilename = item.linkPath.split('/').pop() || item.number
-  const srcDir = getParentPath(item.srcPath)
-  const linkDir = getParentPath(item.linkPath)
-  const mediaChips = [item.resolution, item.videoCodec, item.bitrate, formatFileSize(item.fileSize)].filter(Boolean) as string[]
   const galleryItems: LightboxItem[] = item.coverURL
     ? [
-      {
-        src: item.coverURL,
-        width: imgRef.current?.naturalWidth || undefined,
-        height: imgRef.current?.naturalHeight || undefined,
-        msrc: imgRef.current?.currentSrc || undefined,
-      },
-      ...(item.sampleImages || []).filter(Boolean).map((src) => ({ src })),
-    ]
+        {
+          src: item.coverURL,
+          width: imgRef.current?.naturalWidth || undefined,
+          height: imgRef.current?.naturalHeight || undefined,
+          msrc: imgRef.current?.currentSrc || undefined,
+        },
+        ...(item.sampleImages || []).filter(Boolean).map((src) => ({ src })),
+      ]
     : []
 
   return (
@@ -67,7 +76,7 @@ export default function LibraryCard({ item, onAction }: Props) {
               <span className="text-white font-semibold text-sm">{item.number}</span>
               {item.rating && <span className="ml-2 text-xs text-amber-400">★ {item.rating}{item.reviewCount > 0 && ` (${item.reviewCount})`}</span>}
             </div>
-            {item.alive
+            {allAlive
               ? <span className="text-xs px-2 py-0.5 bg-emerald-500/20 text-emerald-400 rounded flex items-center gap-1"><CheckCircle size={10} />alive</span>
               : <span className="text-xs px-2 py-0.5 bg-red-500/20 text-red-400 rounded flex items-center gap-1"><AlertCircle size={10} />missing</span>}
           </div>
@@ -86,29 +95,33 @@ export default function LibraryCard({ item, onAction }: Props) {
         )}
 
         <div className="rounded-xl border border-gray-800 bg-[#111] overflow-hidden">
-          <FlowNode
-            label="Source"
-            filename={srcFilename || 'Original source unavailable'}
-            pathHint={srcDir || 'Source path missing'}
-            meta={mediaChips}
-            icon={Film}
-          />
+          {outputs.map((output, idx) => (
+            <div key={output.id} className={idx > 0 ? 'border-t border-gray-800' : ''}>
+              <FlowNode
+                label="Source"
+                filename={getFilename(output.srcPath) || 'Original source unavailable'}
+                pathHint={getParentPath(output.srcPath) || 'Source path missing'}
+                meta={[output.resolution, output.videoCodec, output.bitrate, formatFileSize(output.fileSize)].filter(Boolean) as string[]}
+                icon={Film}
+              />
 
-          <div className="relative flex justify-center py-2">
-            <div className="absolute left-3 right-3 top-1/2 h-px -translate-y-1/2 bg-gray-800" />
-            <span className="relative inline-flex items-center gap-1 rounded-full border border-indigo-500/20 bg-[#171717] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-indigo-300">
-              <Link2 size={10} />
-              {item.linkType}
-            </span>
-          </div>
+              <div className="relative flex justify-center py-2">
+                <div className="absolute left-3 right-3 top-1/2 h-px -translate-y-1/2 bg-gray-800" />
+                <span className="relative inline-flex items-center gap-1 rounded-full border border-indigo-500/20 bg-[#171717] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-indigo-300">
+                  <Link2 size={10} />
+                  {output.linkType}
+                </span>
+              </div>
 
-          <FlowNode
-            label="Output"
-            filename={linkFilename}
-            pathHint={linkDir}
-            meta={['Nfo', 'CoverIMG'].filter(Boolean)}
-            icon={FileVideo}
-          />
+              <FlowNode
+                label="Output"
+                filename={getFilename(output.linkPath) || item.number}
+                pathHint={getParentPath(output.linkPath)}
+                meta={['Nfo', 'CoverIMG']}
+                icon={FileVideo}
+              />
+            </div>
+          ))}
         </div>
 
         {/* Actions */}
@@ -119,11 +132,39 @@ export default function LibraryCard({ item, onAction }: Props) {
           <button onClick={handleUnlink} className="flex items-center gap-1 text-xs px-2.5 py-1.5 text-gray-500 hover:text-amber-400 hover:bg-[#222] rounded-lg transition">
             <Unlink size={12} />Unlink
           </button>
-          <button onClick={handleDelete} className="flex items-center gap-1 text-xs px-2.5 py-1.5 text-gray-500 hover:text-red-400 hover:bg-[#222] rounded-lg transition">
-            <Trash2 size={12} />Remove
-          </button>
         </div>
       </div>
+      <Modal open={showUnlinkConfirm} onClose={() => !unlinking && setShowUnlinkConfirm(false)} title={`Unlink ${item.number}`}>
+        <div className="space-y-4">
+          <p className="text-sm text-gray-400">
+            This will remove {outputs.length} linked file{outputs.length > 1 ? 's' : ''} and related sidecars.
+          </p>
+          <div className="rounded-lg border border-gray-800 bg-[#111] max-h-64 overflow-y-auto">
+            {unlinkTargets.map((target) => (
+              <div key={`${target.kind}-${target.path}`} className="flex items-center gap-2 border-b border-gray-800 last:border-b-0 px-3 py-2">
+                <span className="rounded bg-gray-800 px-1.5 py-0.5 text-[10px] text-gray-400">{target.kind}</span>
+                <code className="min-w-0 flex-1 truncate text-xs text-gray-500">{target.path}</code>
+              </div>
+            ))}
+          </div>
+          <div className="flex items-center justify-end gap-2">
+            <button
+              onClick={() => setShowUnlinkConfirm(false)}
+              disabled={unlinking}
+              className="px-3 py-1.5 rounded-lg border border-gray-700 text-xs text-gray-400 hover:text-white hover:bg-[#222] disabled:opacity-50 transition"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleUnlinkConfirm}
+              disabled={unlinking}
+              className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-xs text-white disabled:opacity-50 transition"
+            >
+              {unlinking ? 'Unlinking...' : 'Confirm Unlink'}
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
   )
 }
@@ -167,9 +208,16 @@ function FlowNode({
 }
 
 function getParentPath(path: string) {
+  if (!path) return ''
   const parts = path.split('/')
   parts.pop()
   return parts.join('/')
+}
+
+function getFilename(path: string) {
+  if (!path) return ''
+  const parts = path.split('/')
+  return parts[parts.length - 1] || ''
 }
 
 function formatFileSize(fileSize: number) {
@@ -177,4 +225,53 @@ function formatFileSize(fileSize: number) {
     return ''
   }
   return `${(fileSize / (1024 * 1024 * 1024)).toFixed(2)} GB`
+}
+
+type UnlinkTarget = {
+  kind: 'Link' | 'NFO' | 'IMG'
+  path: string
+}
+
+function buildUnlinkTargets(number: string, outputs: LibraryGroupResponse['outputs']) {
+  const out: UnlinkTarget[] = []
+  const seen = new Set<string>()
+  const dirs = new Set<string>()
+
+  for (const output of outputs) {
+    const linkPath = (output.linkPath || '').trim()
+    if (!linkPath) continue
+
+    const linkKey = `link:${linkPath}`
+    if (!seen.has(linkKey)) {
+      seen.add(linkKey)
+      out.push({ kind: 'Link', path: linkPath })
+    }
+
+    const dir = getParentPath(linkPath)
+    if (dir) dirs.add(dir)
+  }
+
+  for (const dir of dirs) {
+    const nfo = joinPath(dir, `${number}.nfo`)
+    const nfoKey = `nfo:${nfo}`
+    if (!seen.has(nfoKey)) {
+      seen.add(nfoKey)
+      out.push({ kind: 'NFO', path: nfo })
+    }
+
+    const img = joinPath(dir, `${number}.(jpg|png|webp|gif)`)
+    const imgKey = `img:${img}`
+    if (!seen.has(imgKey)) {
+      seen.add(imgKey)
+      out.push({ kind: 'IMG', path: img })
+    }
+  }
+
+  return out
+}
+
+function joinPath(dir: string, name: string) {
+  if (!dir) return name
+  if (dir.endsWith('/')) return `${dir}${name}`
+  return `${dir}/${name}`
 }

@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Plus, Scan, Archive, Merge, Loader2 } from 'lucide-react'
-import { listPipelines, createPipeline, deletePipeline } from '../api/client'
+import { listPipelines, createPipeline } from '../api/client'
 import type { PipelineResponse, CreatePipelineReq } from '../api/client'
 import { usePolling } from '../api/usePolling'
 import Modal from '../components/Modal'
@@ -35,16 +35,6 @@ export default function Home() {
     try {
       await createPipeline(req)
       setShowWizard(false)
-      refresh()
-    } catch (e: any) {
-      alert(e.message)
-    }
-  }
-
-  const handleDelete = async (id: number, name: string) => {
-    if (!confirm(`Delete pipeline "${name}"? This cannot be undone.`)) return
-    try {
-      await deletePipeline(id)
       refresh()
     } catch (e: any) {
       alert(e.message)
@@ -118,13 +108,6 @@ export default function Home() {
                 ))}
               </div>
 
-              {/* Delete button (stop propagation) */}
-              <button
-                onClick={(e) => { e.stopPropagation(); handleDelete(ps.id, ps.name) }}
-                className="absolute top-3 right-3 text-xs text-gray-700 hover:text-red-400 opacity-0 group-hover:opacity-100 transition"
-              >
-                ×
-              </button>
             </div>
           ))}
         </div>
