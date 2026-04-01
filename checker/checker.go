@@ -27,7 +27,7 @@ func detectActualLinkType(path string) string {
 }
 
 func Run(ctx context.Context, s committed.Store, interval time.Duration) {
-	fixOutputRecords(ctx, s)
+	fixBangouFileRecords(ctx, s)
 	backfillMediaInfo(ctx, s)
 
 	t := time.NewTicker(interval)
@@ -44,90 +44,87 @@ func Run(ctx context.Context, s committed.Store, interval time.Duration) {
 }
 
 func check(ctx context.Context, s committed.Store) {
-	outputs, err := s.ListAllOutputs(ctx)
+	files, err := s.ListAllBangouFiles(ctx)
 	if err != nil {
-		log.Printf("checker list outputs: %v", err)
+		log.Printf("checker list files: %v", err)
 		return
 	}
-	for _, o := range outputs {
-		alive := CheckLink(o.LinkPath)
-		if alive == o.Alive {
+	for _, f := range files {
+		alive := CheckLink(f.LinkPath)
+		if alive == f.Alive {
 			continue
 		}
-		if err := s.SetOutputAlive(ctx, o.ID, alive); err != nil {
-			log.Printf("checker update output(%d): %v", o.ID, err)
+		if err := s.SetBangouFileAlive(ctx, f.ID, alive); err != nil {
+			log.Printf("checker update file(%d): %v", f.ID, err)
 			continue
 		}
 		if !alive {
-			log.Printf("orphaned: %s -> %s", o.Number, o.LinkPath)
+			log.Printf("orphaned: file %d -> %s", f.ID, f.LinkPath)
 		}
 	}
 }
 
-func fixOutputRecords(ctx context.Context, s committed.Store) {
-	outputs, err := s.ListAllOutputs(ctx)
+func fixBangouFileRecords(ctx context.Context, s committed.Store) {
+	files, err := s.ListAllBangouFiles(ctx)
 	if err != nil {
-		log.Printf("checker fix outputs: %v", err)
+		log.Printf("checker fix files: %v", err)
 		return
 	}
 	fixed := 0
-	for _, o := range outputs {
-		actual := detectActualLinkType(o.LinkPath)
+	for _, f := range files {
+		actual := detectActualLinkType(f.LinkPath)
 		if actual == "" {
 			continue
 		}
-		if actual != o.LinkType {
-			if err := s.SetOutputLinkType(ctx, o.ID, actual); err != nil {
-				log.Printf("checker fix link type(%d): %v", o.ID, err)
+		if actual != f.LinkType {
+			if err := s.SetBangouFileLinkType(ctx, f.ID, actual); err != nil {
+				log.Printf("checker fix link type(%d): %v", f.ID, err)
 			} else {
-				log.Printf("checker: fixed %s link type %s -> %s", o.Number, o.LinkType, actual)
+				log.Printf("checker: fixed file %d link type %s -> %s", f.ID, f.LinkType, actual)
 				fixed++
 			}
 		}
-		if o.SrcPath == "" && actual == "symlink" {
-			if target, err := os.Readlink(o.LinkPath); err == nil && target != "" {
-				if err := s.SetOutputSrcPath(ctx, o.ID, target); err != nil {
-					log.Printf("checker fix src_path(%d): %v", o.ID, err)
+		if f.SrcPath == "" && actual == "symlink" {
+			if target, err := os.Readlink(f.LinkPath); err == nil && target != "" {
+				if err := s.SetBangouFileSrcPath(ctx, f.ID, target); err != nil {
+					log.Printf("checker fix src_path(%d): %v", f.ID, err)
 				} else {
-					log.Printf("checker: fixed %s src_path -> %s", o.Number, target)
+					log.Printf("checker: fixed file %d src_path -> %s", f.ID, target)
 					fixed++
 				}
 			}
 		}
 	}
 	if fixed > 0 {
-		log.Printf("checker: fixed %d output records", fixed)
+		log.Printf("checker: fixed %d file records", fixed)
 	}
 }
 
-// backfillMediaInfo probes files for outputs missing media info and updates the DB.
 func backfillMediaInfo(ctx context.Context, s committed.Store) {
-	outputs, err := s.ListAllOutputs(ctx)
+	files, err := s.ListAllBangouFiles(ctx)
 	if err != nil {
 		log.Printf("checker backfill: %v", err)
 		return
 	}
 	filled := 0
-	for _, o := range outputs {
-		if o.Resolution != "" {
-			continue // already has media info
+	for _, f := range files {
+		if f.Resolution != "" {
+			continue
 		}
-		if !o.Alive {
-			continue // file missing, can't probe
+		if !f.Alive {
+			continue
 		}
 
-		// Probe the actual file (follow symlinks via link_path)
-		probePath := o.LinkPath
+		probePath := f.LinkPath
 		media, err := scanner.Probe(probePath)
 		if err != nil {
-			log.Printf("checker backfill %s: probe failed: %v", o.Number, err)
+			log.Printf("checker backfill file %d: probe failed: %v", f.ID, err)
 			continue
 		}
 		if media == nil {
 			continue
 		}
 
-		// Get file size
 		fi, err := os.Stat(probePath)
 		var fileSize int64
 		if err == nil {
@@ -137,14 +134,14 @@ func backfillMediaInfo(ctx context.Context, s committed.Store) {
 			media.BitrateBps = int64(float64(fileSize*8) / media.Duration)
 		}
 
-		if err := s.SetOutputMedia(ctx, o.ID, fileSize, media.Resolution(), media.VideoCodec, media.AudioCodec, media.DurationText(), media.BitrateText()); err != nil {
-			log.Printf("checker backfill %s: update failed: %v", o.Number, err)
+		if err := s.SetBangouFileMedia(ctx, f.ID, fileSize, media.Resolution(), media.VideoCodec, media.AudioCodec, media.DurationText(), media.BitrateText()); err != nil {
+			log.Printf("checker backfill file %d: update failed: %v", f.ID, err)
 			continue
 		}
-		log.Printf("checker: backfilled %s media: %s %s %s", o.Number, media.Resolution(), media.VideoCodec, media.BitrateText())
+		log.Printf("checker: backfilled file %d media: %s %s %s", f.ID, media.Resolution(), media.VideoCodec, media.BitrateText())
 		filled++
 	}
 	if filled > 0 {
-		log.Printf("checker: backfilled media info for %d outputs", filled)
+		log.Printf("checker: backfilled media info for %d files", filled)
 	}
 }

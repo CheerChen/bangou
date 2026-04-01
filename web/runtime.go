@@ -180,7 +180,7 @@ func (rt *PipelineRuntime) scan(ctx context.Context, store committed.Store) {
 
 		parsed := parser.Parse(f.Filename)
 		if parsed.Number != "" {
-			if ok, _ := store.IsCommitted(ctx, parsed.Number); ok {
+			if ok, _ := store.IsBangouCommitted(ctx, rt.Pipeline.ID, parsed.Number); ok {
 				continue
 			}
 		}
@@ -223,13 +223,15 @@ func (rt *PipelineRuntime) scrapeWorker(ctx context.Context, store committed.Sto
 func (rt *PipelineRuntime) processScrapeJob(ctx context.Context, store committed.Store, job scrapeJob) {
 	number := job.number
 	if !job.force {
-		if ok, _ := store.IsCommitted(ctx, number); ok {
-			if meta, _ := store.GetMetadata(ctx, number); meta != nil {
-				rt.Manager.SetScrapeResult(number, staging.ScrapeResult{
-					Meta:   metadataToMovie(meta),
-					Errors: map[string]string{},
-					Status: "success",
-				})
+		if ok, _ := store.IsBangouCommitted(ctx, rt.Pipeline.ID, number); ok {
+			if b, _ := store.GetBangouByPipelineAndNumber(ctx, rt.Pipeline.ID, number); b != nil {
+				if meta, _ := store.GetMetadataByBangou(ctx, b.ID); meta != nil {
+					rt.Manager.SetScrapeResult(number, staging.ScrapeResult{
+						Meta:   metadataToMovie(meta),
+						Errors: map[string]string{},
+						Status: "success",
+					})
+				}
 			}
 			return
 		}

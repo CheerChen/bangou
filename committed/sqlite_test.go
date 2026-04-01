@@ -82,86 +82,127 @@ func TestProviderConfig(t *testing.T) {
 	}
 }
 
-func TestOutputsWithPipeline(t *testing.T) {
+func TestBangouAndFiles(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 
-	id, _ := s.CreatePipeline(ctx, &Pipeline{Name: "VR", InputDir: "/dl/vr", OutputDir: "/media/vr"})
+	pid, _ := s.CreatePipeline(ctx, &Pipeline{Name: "VR", InputDir: "/dl/vr", OutputDir: "/media/vr"})
 
-	if err := s.CreateOutput(ctx, &Output{PipelineID: id, Number: "ACHJ-057", LinkPath: "/out/a.mp4", LinkType: "hardlink"}); err != nil {
+	bid, err := s.CreateBangou(ctx, &Bangou{PipelineID: pid, Number: "ACHJ-057", OutDir: "/media/vr/ACHJ-057"})
+	if err != nil {
 		t.Fatal(err)
 	}
-	ok, err := s.IsCommitted(ctx, "ACHJ-057")
+
+	if err := s.CreateBangouFile(ctx, &BangouFile{BangouID: bid, LinkPath: "/media/vr/ACHJ-057/ACHJ-057.mp4", LinkType: "hardlink"}); err != nil {
+		t.Fatal(err)
+	}
+
+	ok, err := s.IsBangouCommitted(ctx, pid, "ACHJ-057")
 	if err != nil || !ok {
 		t.Fatalf("is committed: %v %v", ok, err)
 	}
 
-	outs, total, err := s.ListOutputsByPipeline(ctx, id, 10, 0, "added", "desc")
-	if err != nil || total != 1 || len(outs) != 1 {
-		t.Fatalf("outputs: %v total=%d len=%d", err, total, len(outs))
+	bangous, total, err := s.ListBangousByPipeline(ctx, pid, 10, 0, "added", "desc")
+	if err != nil || total != 1 || len(bangous) != 1 {
+		t.Fatalf("bangous: %v total=%d len=%d", err, total, len(bangous))
 	}
-	if outs[0].PipelineID != id {
-		t.Fatalf("pipeline_id: got %d want %d", outs[0].PipelineID, id)
+	if bangous[0].Number != "ACHJ-057" {
+		t.Fatalf("unexpected bangou: %+v", bangous[0])
+	}
+
+	files, err := s.ListBangouFilesByBangou(ctx, bid)
+	if err != nil || len(files) != 1 {
+		t.Fatalf("files: %v len=%d", err, len(files))
 	}
 }
 
-func TestGetOutputByID(t *testing.T) {
+func TestGetBangouFileByID(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 
-	id, _ := s.CreatePipeline(ctx, &Pipeline{Name: "VR", InputDir: "/dl/vr", OutputDir: "/media/vr"})
-	if err := s.CreateOutput(ctx, &Output{PipelineID: id, Number: "ACHJ-057", LinkPath: "/out/a.mp4", LinkType: "hardlink"}); err != nil {
-		t.Fatal(err)
+	pid, _ := s.CreatePipeline(ctx, &Pipeline{Name: "VR", InputDir: "/dl/vr", OutputDir: "/media/vr"})
+	bid, _ := s.CreateBangou(ctx, &Bangou{PipelineID: pid, Number: "ACHJ-057", OutDir: "/media/vr/ACHJ-057"})
+	_ = s.CreateBangouFile(ctx, &BangouFile{BangouID: bid, LinkPath: "/out/a.mp4", LinkType: "hardlink"})
+
+	files, _ := s.ListBangouFilesByBangou(ctx, bid)
+	if len(files) != 1 {
+		t.Fatalf("expected 1 file, got %d", len(files))
 	}
 
-	outs, _, err := s.ListOutputsByPipeline(ctx, id, 1, 0, "added", "desc")
-	if err != nil || len(outs) != 1 {
-		t.Fatalf("list outputs: err=%v len=%d", err, len(outs))
-	}
-
-	got, err := s.GetOutputByID(ctx, outs[0].ID)
+	got, err := s.GetBangouFileByID(ctx, files[0].ID)
 	if err != nil {
-		t.Fatalf("get output by id: %v", err)
+		t.Fatalf("get file by id: %v", err)
 	}
-	if got.Number != "ACHJ-057" || got.LinkPath != "/out/a.mp4" {
-		t.Fatalf("unexpected output: %+v", got)
+	if got.LinkPath != "/out/a.mp4" {
+		t.Fatalf("unexpected file: %+v", got)
 	}
 
-	if _, err := s.GetOutputByID(ctx, 999999); err == nil {
+	if _, err := s.GetBangouFileByID(ctx, 999999); err == nil {
 		t.Fatal("expected sql.ErrNoRows")
 	} else if err != sql.ErrNoRows {
 		t.Fatalf("unexpected err: %v", err)
 	}
 }
 
-func TestOutputGroupsByPipeline(t *testing.T) {
+func TestBangouMultiPart(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 
-	id, _ := s.CreatePipeline(ctx, &Pipeline{Name: "VR", InputDir: "/dl/vr", OutputDir: "/media/vr"})
-	_ = s.CreateOutput(ctx, &Output{PipelineID: id, Number: "SIVR-296", LinkPath: "/out/SIVR-296-cd1.mp4", LinkType: "hardlink"})
-	_ = s.CreateOutput(ctx, &Output{PipelineID: id, Number: "SIVR-296", LinkPath: "/out/SIVR-296-cd2.mp4", LinkType: "hardlink"})
-	_ = s.CreateOutput(ctx, &Output{PipelineID: id, Number: "ACHJ-057", LinkPath: "/out/ACHJ-057.mp4", LinkType: "hardlink"})
+	pid, _ := s.CreatePipeline(ctx, &Pipeline{Name: "VR", InputDir: "/dl/vr", OutputDir: "/media/vr"})
 
-	groups, total, err := s.ListOutputGroupsByPipeline(ctx, id, 10, 0, "number", "asc")
+	bid1, _ := s.CreateBangou(ctx, &Bangou{PipelineID: pid, Number: "SIVR-296", OutDir: "/out/SIVR-296"})
+	_ = s.CreateBangouFile(ctx, &BangouFile{BangouID: bid1, LinkPath: "/out/SIVR-296/SIVR-296-cd1.mp4", LinkType: "hardlink"})
+	_ = s.CreateBangouFile(ctx, &BangouFile{BangouID: bid1, LinkPath: "/out/SIVR-296/SIVR-296-cd2.mp4", LinkType: "hardlink"})
+
+	bid2, _ := s.CreateBangou(ctx, &Bangou{PipelineID: pid, Number: "ACHJ-057", OutDir: "/out/ACHJ-057"})
+	_ = s.CreateBangouFile(ctx, &BangouFile{BangouID: bid2, LinkPath: "/out/ACHJ-057/ACHJ-057.mp4", LinkType: "hardlink"})
+
+	bangous, total, err := s.ListBangousByPipeline(ctx, pid, 10, 0, "number", "asc")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if total != 2 {
-		t.Fatalf("total = %d, want 2", total)
+	if total != 2 || len(bangous) != 2 {
+		t.Fatalf("total=%d len=%d", total, len(bangous))
 	}
-	if len(groups) != 2 {
-		t.Fatalf("len(groups) = %d, want 2", len(groups))
+	if bangous[0].Number != "ACHJ-057" {
+		t.Fatalf("bangou[0] = %+v", bangous[0])
 	}
-	if groups[0].Number != "ACHJ-057" || len(groups[0].Outputs) != 1 {
-		t.Fatalf("group[0] = %+v", groups[0])
+	if bangous[1].Number != "SIVR-296" {
+		t.Fatalf("bangou[1] = %+v", bangous[1])
 	}
-	if groups[1].Number != "SIVR-296" || len(groups[1].Outputs) != 2 {
-		t.Fatalf("group[1] = %+v", groups[1])
+
+	files, _ := s.ListBangouFilesByBangou(ctx, bid1)
+	if len(files) != 2 {
+		t.Fatalf("expected 2 files for SIVR-296, got %d", len(files))
 	}
 }
 
-func TestSettingsAndMetadata(t *testing.T) {
+func TestMetadataWithBangou(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	pid, _ := s.CreatePipeline(ctx, &Pipeline{Name: "VR", InputDir: "/dl/vr", OutputDir: "/media/vr"})
+	bid, _ := s.CreateBangou(ctx, &Bangou{PipelineID: pid, Number: "ACHJ-057", OutDir: "/out/ACHJ-057"})
+
+	if err := s.UpsertMetadata(ctx, &Metadata{BangouID: bid, Number: "ACHJ-057", Title: "Test Title"}); err != nil {
+		t.Fatal(err)
+	}
+	m, err := s.GetMetadataByBangou(ctx, bid)
+	if err != nil || m == nil || m.Title != "Test Title" {
+		t.Fatalf("metadata: %+v err=%v", m, err)
+	}
+
+	// Upsert should update
+	if err := s.UpsertMetadata(ctx, &Metadata{BangouID: bid, Number: "ACHJ-057", Title: "Updated"}); err != nil {
+		t.Fatal(err)
+	}
+	m, _ = s.GetMetadataByBangou(ctx, bid)
+	if m.Title != "Updated" {
+		t.Fatalf("expected updated title, got %q", m.Title)
+	}
+}
+
+func TestSettingsLegacy(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 	if err := s.SetSetting(ctx, "input_dir", "/input"); err != nil {
@@ -171,12 +212,68 @@ func TestSettingsAndMetadata(t *testing.T) {
 	if err != nil || v != "/input" {
 		t.Fatalf("setting: %q err=%v", v, err)
 	}
-	if err := s.UpsertMetadata(ctx, &Metadata{Number: "ACHJ-057", Title: "T"}); err != nil {
+}
+
+func TestDeleteBangouCascades(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	pid, _ := s.CreatePipeline(ctx, &Pipeline{Name: "VR", InputDir: "/dl/vr", OutputDir: "/media/vr"})
+	bid, _ := s.CreateBangou(ctx, &Bangou{PipelineID: pid, Number: "ACHJ-057", OutDir: "/out/ACHJ-057"})
+	_ = s.CreateBangouFile(ctx, &BangouFile{BangouID: bid, LinkPath: "/out/a.mp4", LinkType: "hardlink"})
+	_ = s.UpsertMetadata(ctx, &Metadata{BangouID: bid, Number: "ACHJ-057", Title: "T"})
+
+	if err := s.DeleteBangou(ctx, bid); err != nil {
 		t.Fatal(err)
 	}
-	m, err := s.GetMetadata(ctx, "ACHJ-057")
-	if err != nil || m == nil || m.Title != "T" {
-		t.Fatalf("metadata: %+v err=%v", m, err)
+
+	files, _ := s.ListBangouFilesByBangou(ctx, bid)
+	if len(files) != 0 {
+		t.Fatal("expected files deleted")
+	}
+	m, _ := s.GetMetadataByBangou(ctx, bid)
+	if m != nil {
+		t.Fatal("expected metadata deleted")
+	}
+	b, _ := s.GetBangou(ctx, bid)
+	if b != nil {
+		t.Fatal("expected bangou deleted")
+	}
+}
+
+func TestBangouUniqueConstraint(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	pid, _ := s.CreatePipeline(ctx, &Pipeline{Name: "VR", InputDir: "/dl/vr", OutputDir: "/media/vr"})
+	_, err := s.CreateBangou(ctx, &Bangou{PipelineID: pid, Number: "ACHJ-057", OutDir: "/out/ACHJ-057"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Same pipeline + number should fail
+	_, err = s.CreateBangou(ctx, &Bangou{PipelineID: pid, Number: "ACHJ-057", OutDir: "/out/ACHJ-057-2"})
+	if err == nil {
+		t.Fatal("expected unique constraint error")
+	}
+}
+
+func TestCountBangouFiles(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	pid, _ := s.CreatePipeline(ctx, &Pipeline{Name: "VR", InputDir: "/dl/vr", OutputDir: "/media/vr"})
+	bid, _ := s.CreateBangou(ctx, &Bangou{PipelineID: pid, Number: "SIVR-296", OutDir: "/out/SIVR-296"})
+
+	count, _ := s.CountBangouFiles(ctx, bid)
+	if count != 0 {
+		t.Fatalf("expected 0, got %d", count)
+	}
+
+	_ = s.CreateBangouFile(ctx, &BangouFile{BangouID: bid, LinkPath: "/out/cd1.mp4", LinkType: "hardlink"})
+	_ = s.CreateBangouFile(ctx, &BangouFile{BangouID: bid, LinkPath: "/out/cd2.mp4", LinkType: "hardlink"})
+	count, _ = s.CountBangouFiles(ctx, bid)
+	if count != 2 {
+		t.Fatalf("expected 2, got %d", count)
 	}
 }
 
@@ -192,10 +289,7 @@ func TestMigrateSettingsToPipeline(t *testing.T) {
 	_ = s.SetSetting(ctx, "dmm_affiliate_id", "myaff")
 	_ = s.SetSetting(ctx, "aria2_rpc_url", "http://localhost:6800/jsonrpc")
 
-	// Re-open to trigger migration
-	// For in-memory DB we can't re-open, so test the migration function directly
 	store := s.(*SQLiteStore)
-	// Delete any auto-created pipelines first
 	store.db.Exec("DELETE FROM pipelines")
 	if err := migrateSettingsToPipeline(store.db); err != nil {
 		t.Fatal(err)
