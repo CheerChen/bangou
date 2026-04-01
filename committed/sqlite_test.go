@@ -95,7 +95,7 @@ func TestOutputsWithPipeline(t *testing.T) {
 		t.Fatalf("is committed: %v %v", ok, err)
 	}
 
-	outs, total, err := s.ListOutputsByPipeline(ctx, id, 10, 0)
+	outs, total, err := s.ListOutputsByPipeline(ctx, id, 10, 0, "added", "desc")
 	if err != nil || total != 1 || len(outs) != 1 {
 		t.Fatalf("outputs: %v total=%d len=%d", err, total, len(outs))
 	}

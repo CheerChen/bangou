@@ -118,13 +118,22 @@ func (e *Executor) Link(ctx context.Context, number string, selectedPaths []stri
 		if err != nil {
 			return fmt.Errorf("link part %d: %w", part, err)
 		}
-		if err := e.store.CreateOutput(ctx, &committed.Output{
+		output := &committed.Output{
 			PipelineID: opt.PipelineID,
 			Number:     number,
 			SrcPath:    item.File.Path,
 			LinkPath:   result.LinkPath,
 			LinkType:   result.LinkType,
-		}); err != nil {
+			FileSize:   item.File.Size,
+		}
+		if item.File.Media != nil {
+			output.Resolution = item.File.Media.Resolution()
+			output.VideoCodec = item.File.Media.VideoCodec
+			output.AudioCodec = item.File.Media.AudioCodec
+			output.Duration = item.File.Media.DurationText()
+			output.Bitrate = item.File.Media.BitrateText()
+		}
+		if err := e.store.CreateOutput(ctx, output); err != nil {
 			return fmt.Errorf("store output: %w", err)
 		}
 		log.Printf("[link] %s: part %d %s %s -> %s", number, part, result.LinkType, item.File.Path, result.LinkPath)

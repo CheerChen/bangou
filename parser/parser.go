@@ -22,9 +22,9 @@ var (
 	partTokenRe  = regexp.MustCompile(`(?i)^part(\d+)$`)
 	tagTokenRe   = regexp.MustCompile(`(?i)^(8k|4k|vr)$`)
 
-	heyzoRe    = regexp.MustCompile(`(?i)^(heyzo)(\d{4})$`)
-	mgstageRe  = regexp.MustCompile(`(?i)^(\d{3,4}[a-zA-Z]{2,6})(\d{3,6})$`)
-	standardRe = regexp.MustCompile(`(?i)^\d*([a-zA-Z]{2,5})(\d{3,6})$`)
+	heyzoRe    = regexp.MustCompile(`(?i)^(heyzo)(\d{4})(?:\D|$)`)
+	mgstageRe  = regexp.MustCompile(`(?i)^(\d{3,4}[a-zA-Z]{2,6})(\d{3,6})(?:\D|$)`)
+	standardRe = regexp.MustCompile(`(?i)^\d*([a-zA-Z]{2,5})(\d{3,6})(?:\D|$)`)
 )
 
 func Parse(filename string) ParsedFile {
@@ -102,25 +102,32 @@ func Parse(filename string) ParsedFile {
 	res.Tags = unique(res.Tags)
 
 	// 5. Extract normalized number from raw identifier
-	res.Number = extractNumber(raw)
-	if res.Number != "" {
-		res.RawNumber = raw
-	}
+	res.Number, res.RawNumber = extractNumber(raw)
 
 	return res
 }
 
-func extractNumber(raw string) string {
-	if m := heyzoRe.FindStringSubmatch(raw); len(m) > 2 {
-		return strings.ToUpper(m[1]) + "-" + m[2]
+// extractNumber returns (normalized number, raw matched portion).
+func extractNumber(raw string) (string, string) {
+	for _, entry := range []struct {
+		re      *regexp.Regexp
+		format  func([]string) string
+	}{
+		{heyzoRe, func(m []string) string { return strings.ToUpper(m[1]) + "-" + m[2] }},
+		{mgstageRe, func(m []string) string { return strings.ToUpper(m[1]) + "-" + trimLeadingZeros(m[2]) }},
+		{standardRe, func(m []string) string { return strings.ToUpper(m[1]) + "-" + trimLeadingZeros(m[2]) }},
+	} {
+		m := entry.re.FindStringSubmatch(raw)
+		if len(m) <= 2 {
+			continue
+		}
+		idx := entry.re.FindStringSubmatchIndex(raw)
+		// idx[4] and idx[5] are the start/end of capture group 2 (the digit part)
+		// rawMatch = everything from start up to end of the digit group
+		rawMatch := strings.ToLower(raw[:idx[5]])
+		return entry.format(m), rawMatch
 	}
-	if m := mgstageRe.FindStringSubmatch(raw); len(m) > 2 {
-		return strings.ToUpper(m[1]) + "-" + trimLeadingZeros(m[2])
-	}
-	if m := standardRe.FindStringSubmatch(raw); len(m) > 2 {
-		return strings.ToUpper(m[1]) + "-" + trimLeadingZeros(m[2])
-	}
-	return ""
+	return "", ""
 }
 
 func trimLeadingZeros(s string) string {

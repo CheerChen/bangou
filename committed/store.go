@@ -17,11 +17,12 @@ type Store interface {
 	// Outputs
 	CreateOutput(ctx context.Context, o *Output) error
 	DeleteOutput(ctx context.Context, id int64) error
-	ListOutputsByPipeline(ctx context.Context, pipelineID int64, limit, offset int) ([]Output, int, error)
+	ListOutputsByPipeline(ctx context.Context, pipelineID int64, limit, offset int, sort, order string) ([]Output, int, error)
 	ListAllOutputs(ctx context.Context) ([]Output, error)
 	SetOutputAlive(ctx context.Context, id int64, alive bool) error
 	SetOutputLinkType(ctx context.Context, id int64, linkType string) error
 	SetOutputSrcPath(ctx context.Context, id int64, srcPath string) error
+	SetOutputMedia(ctx context.Context, id int64, fileSize int64, resolution, videoCodec, audioCodec, duration, bitrate string) error
 	ListOrphanedOutputs(ctx context.Context) ([]Output, error)
 	IsCommitted(ctx context.Context, number string) (bool, error)
 

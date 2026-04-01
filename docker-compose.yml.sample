@@ -3,9 +3,6 @@ services:
     image: ${API_IMAGE:-192.168.0.110:5000/bangou-api:latest}
     container_name: bangou-api
     volumes:
-      # Mount parent directories — pipelines reference sub-paths within these
-      # e.g. Pipeline "VR":  scan=/mnt/hd1/Download/VR  link=/mnt/hd1/Multimedia/VR
-      #      Pipeline "JAV": scan=/mnt/hd1/Download/JAV  link=/mnt/hd1/Multimedia/JAV
       - /mnt/hd1/Download:/mnt/hd1/Download:rw
       - /mnt/hd1/Multimedia:/mnt/hd1/Multimedia:rw
       - /opt/bangou:/data
@@ -26,8 +23,3 @@ services:
     depends_on:
       - bangou-api
     restart: unless-stopped
-
-# Pipeline configuration is done via the web UI after first start.
-# 1. Open http://<host>:8890
-# 2. Click "New Pipeline" to create pipelines (VR, JAV, etc.)
-# 3. Configure provider credentials (DMM API, aria2) in the wizard

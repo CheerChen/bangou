@@ -30,6 +30,8 @@ func (a *AVWiki) Name() string { return "avwiki" }
 
 func (a *AVWiki) Scrape(ctx context.Context, p Predict) (*MovieMetadata, error) {
 	number := p.Number
+
+	// Try direct URL with normalized number slug
 	direct := fmt.Sprintf(avwikiDirectURL, strings.ToLower(number))
 	if doc, raw, err := a.fetchDoc(ctx, direct); err == nil {
 		if meta := a.parseDetail(doc, number); meta != nil {
@@ -38,6 +40,7 @@ func (a *AVWiki) Scrape(ctx context.Context, p Predict) (*MovieMetadata, error) 
 		}
 	}
 
+	// Fallback: search
 	search := fmt.Sprintf(avwikiSearchURL, url.QueryEscape(number))
 	doc, _, err := a.fetchDoc(ctx, search)
 	if err != nil {
@@ -96,11 +99,19 @@ func (a *AVWiki) findFirstResult(doc *goquery.Document) string {
 		if !ok || href == "" {
 			return true
 		}
-		if strings.Contains(href, "av-wiki.net") {
-			result = href
-			return false
+		if !strings.Contains(href, "av-wiki.net") {
+			return true
 		}
-		return true
+		// Skip non-product pages (actress, category, tag pages)
+		if strings.Contains(href, "/av-actress/") ||
+			strings.Contains(href, "/fanza-video/") ||
+			strings.Contains(href, "/tag/") ||
+			strings.Contains(href, "/category/") ||
+			strings.Contains(href, "/author/") {
+			return true
+		}
+		result = href
+		return false
 	})
 	return result
 }

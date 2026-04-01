@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useMemo } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { Link2, RefreshCw, ChevronLeft, ChevronRight, ArrowUpDown, Loader2 } from 'lucide-react'
 import * as api from '../api/client'
@@ -24,7 +24,25 @@ export default function PipelineDetail() {
   const groupsFetcher = useCallback(() => api.listGroups(pipelineId), [pipelineId])
   const { data: groupsPage, loading: groupsLoading, refresh: refreshGroups } = usePolling(groupsFetcher, 3000)
 
-  // Library (paginated, not polling)
+  // Pending pagination (client-side, data already fully loaded)
+  const [pendingPage, setPendingPage] = useState(0)
+
+  const allPendingItems = useMemo(() => {
+    const groups = groupsPage?.groups || []
+    const unknowns = groupsPage?.unknowns || []
+    return { groups, unknowns, total: groups.length + unknowns.length }
+  }, [groupsPage])
+
+  const pendingTotalPages = Math.ceil(allPendingItems.total / PAGE_SIZE)
+  const pendingSlice = useMemo(() => {
+    const all = [
+      ...allPendingItems.groups.map((g) => ({ type: 'group' as const, data: g })),
+      ...allPendingItems.unknowns.map((u) => ({ type: 'unknown' as const, data: u })),
+    ]
+    return all.slice(pendingPage * PAGE_SIZE, (pendingPage + 1) * PAGE_SIZE)
+  }, [allPendingItems, pendingPage])
+
+  // Library (paginated server-side)
   const [libPage, setLibPage] = useState(0)
   const [libData, setLibData] = useState<api.LibraryPage | null>(null)
   const [libLoading, setLibLoading] = useState(false)
@@ -34,11 +52,11 @@ export default function PipelineDetail() {
   const fetchLibrary = useCallback(async () => {
     setLibLoading(true)
     try {
-      const data = await api.listLibrary(pipelineId, libPage, PAGE_SIZE)
+      const data = await api.listLibrary(pipelineId, libPage, PAGE_SIZE, libSort, libSortDir)
       setLibData(data)
     } catch { /* ignore */ }
     setLibLoading(false)
-  }, [pipelineId, libPage])
+  }, [pipelineId, libPage, libSort, libSortDir])
 
   useEffect(() => {
     if (tab === 'library') fetchLibrary()
@@ -46,6 +64,7 @@ export default function PipelineDetail() {
 
   // Link All
   const [laStatus, setLaStatus] = useState<api.LinkAllStatus | null>(null)
+  const linkableCount = groupsPage?.linkable || 0
 
   const handleLinkAll = async () => {
     try {
@@ -79,10 +98,6 @@ export default function PipelineDetail() {
     try { await api.triggerScan(pipelineId) } catch { /* */ }
   }
 
-  const pGroups = groupsPage?.groups || []
-  const pUnknowns = groupsPage?.unknowns || []
-  const linkableCount = groupsPage?.linkable || 0
-
   if (!pipeline) {
     return <div className="flex justify-center py-12"><Loader2 size={24} className="animate-spin text-gray-500" /></div>
   }
@@ -102,7 +117,7 @@ export default function PipelineDetail() {
       <div className="flex items-center gap-1 mb-4 border-b border-gray-800">
         <button onClick={() => setTab('pending')}
           className={`px-4 py-2 text-sm transition ${tab === 'pending' ? 'text-white border-b-2 border-indigo-500' : 'text-gray-500 hover:text-gray-300'}`}>
-          Pending ({pGroups.length + pUnknowns.length})
+          Pending ({allPendingItems.total})
         </button>
         <button onClick={() => setTab('library')}
           className={`px-4 py-2 text-sm transition ${tab === 'library' ? 'text-white border-b-2 border-indigo-500' : 'text-gray-500 hover:text-gray-300'}`}>
@@ -112,13 +127,22 @@ export default function PipelineDetail() {
 
       {tab === 'pending' && (
         <>
-          {groupsLoading && pGroups.length === 0 ? (
+          {groupsLoading && allPendingItems.total === 0 ? (
             <div className="flex justify-center py-12"><Loader2 size={24} className="animate-spin text-gray-500" /></div>
-          ) : (pGroups.length > 0 || pUnknowns.length > 0) ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {pGroups.map((g) => <GroupCard key={g.number} group={g} pipelineId={pipelineId} onAction={refreshGroups} />)}
-              {pUnknowns.map((u) => <UnknownCard key={u.path} file={u} pipelineId={pipelineId} onAction={refreshGroups} />)}
-            </div>
+          ) : allPendingItems.total > 0 ? (
+            <>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {pendingSlice.map((item) =>
+                  item.type === 'group'
+                    ? <GroupCard key={item.data.number} group={item.data} pipelineId={pipelineId} onAction={refreshGroups} />
+                    : <UnknownCard key={item.data.path} file={item.data} pipelineId={pipelineId} onAction={refreshGroups} />
+                )}
+              </div>
+              {/* Pending pagination */}
+              {pendingTotalPages > 1 && (
+                <Pagination page={pendingPage} totalPages={pendingTotalPages} onPage={setPendingPage} />
+              )}
+            </>
           ) : (
             <div className="text-center text-gray-600 py-12">No pending groups.</div>
           )}
@@ -130,7 +154,7 @@ export default function PipelineDetail() {
           {(libData?.total ?? 0) > 0 && (
             <div className="flex items-center gap-2 mb-4">
               <ArrowUpDown size={12} className="text-gray-600" />
-              {['added', 'number', 'year', 'rating'].map((key) => (
+              {['added', 'number', 'date', 'rating'].map((key) => (
                 <button key={key} onClick={() => toggleSort(key)}
                   className={`text-xs px-2.5 py-1 rounded-lg transition ${libSort === key ? 'bg-indigo-600 text-white' : 'bg-[#1a1a1a] text-gray-500 hover:text-white border border-gray-800'}`}>
                   {key}{libSort === key && (libSortDir === 'desc' ? ' ↓' : ' ↑')}
@@ -143,29 +167,16 @@ export default function PipelineDetail() {
           {libLoading && !libData ? (
             <div className="flex justify-center py-12"><Loader2 size={24} className="animate-spin text-gray-500" /></div>
           ) : libData && libData.items.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {libData.items.map((item) => <LibraryCard key={item.id} item={item} onAction={fetchLibrary} />)}
             </div>
           ) : (
             <div className="text-center text-gray-600 py-12">No committed outputs yet.</div>
           )}
 
-          {/* Pagination */}
+          {/* Library pagination */}
           {libData && Math.ceil(libData.total / PAGE_SIZE) > 1 && (
-            <div className="flex items-center justify-center gap-3 mt-6">
-              <button onClick={() => setLibPage(Math.max(0, libPage - 1))} disabled={libPage === 0}
-                className="p-2 text-gray-500 hover:text-white disabled:opacity-20 transition"><ChevronLeft size={16} /></button>
-              <div className="flex gap-1">
-                {Array.from({ length: Math.ceil(libData.total / PAGE_SIZE) }, (_, i) => (
-                  <button key={i} onClick={() => setLibPage(i)}
-                    className={`w-8 h-8 text-xs rounded-lg transition ${i === libPage ? 'bg-indigo-600 text-white' : 'bg-[#1a1a1a] text-gray-500 hover:text-white border border-gray-800'}`}>
-                    {i + 1}
-                  </button>
-                ))}
-              </div>
-              <button onClick={() => setLibPage(Math.min(Math.ceil(libData.total / PAGE_SIZE) - 1, libPage + 1))} disabled={libPage >= Math.ceil(libData.total / PAGE_SIZE) - 1}
-                className="p-2 text-gray-500 hover:text-white disabled:opacity-20 transition"><ChevronRight size={16} /></button>
-            </div>
+            <Pagination page={libPage} totalPages={Math.ceil(libData.total / PAGE_SIZE)} onPage={setLibPage} />
           )}
         </>
       )}
@@ -199,6 +210,25 @@ export default function PipelineDetail() {
           <RefreshCw size={16} />Rescan
         </button>
       </div>
+    </div>
+  )
+}
+
+function Pagination({ page, totalPages, onPage }: { page: number; totalPages: number; onPage: (p: number) => void }) {
+  return (
+    <div className="flex items-center justify-center gap-3 mt-6">
+      <button onClick={() => onPage(Math.max(0, page - 1))} disabled={page === 0}
+        className="p-2 text-gray-500 hover:text-white disabled:opacity-20 transition"><ChevronLeft size={16} /></button>
+      <div className="flex gap-1">
+        {Array.from({ length: totalPages }, (_, i) => (
+          <button key={i} onClick={() => onPage(i)}
+            className={`w-8 h-8 text-xs rounded-lg transition ${i === page ? 'bg-indigo-600 text-white' : 'bg-[#1a1a1a] text-gray-500 hover:text-white border border-gray-800'}`}>
+            {i + 1}
+          </button>
+        ))}
+      </div>
+      <button onClick={() => onPage(Math.min(totalPages - 1, page + 1))} disabled={page >= totalPages - 1}
+        className="p-2 text-gray-500 hover:text-white disabled:opacity-20 transition"><ChevronRight size={16} /></button>
     </div>
   )
 }

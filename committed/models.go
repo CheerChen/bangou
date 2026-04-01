@@ -28,6 +28,12 @@ type Output struct {
 	SrcPath    string
 	LinkPath   string
 	LinkType   string
+	FileSize   int64
+	Resolution string
+	VideoCodec string
+	AudioCodec string
+	Duration   string
+	Bitrate    string
 	Alive      bool
 	CreatedAt  time.Time
 	CheckedAt  time.Time
