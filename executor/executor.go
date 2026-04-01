@@ -162,12 +162,14 @@ func (e *Executor) Merge(ctx context.Context, number string, selectedPaths []str
 	mergedPath := filepath.Join(inputDir, number+".mkv")
 
 	parts := make([]string, 0, len(selected))
+	var totalSize int64
 	for _, item := range selected {
 		parts = append(parts, item.File.Path)
+		totalSize += item.File.Size
 		log.Printf("[merge] %s: input part: %s (%.2f GB)", number, item.File.Filename, float64(item.File.Size)/(1024*1024*1024))
 	}
-	log.Printf("[merge] %s: running mkvmerge -> %s", number, mergedPath)
-	if err := MergeFiles(parts, mergedPath, func(pct int) {
+	log.Printf("[merge] %s: running mkvmerge -> %s (total %.2f GB)", number, mergedPath, float64(totalSize)/(1024*1024*1024))
+	if err := MergeFiles(parts, mergedPath, totalSize, func(pct int) {
 		log.Printf("[merge] %s: progress %d%%", number, pct)
 		e.staging.SetTaskProgress(number, pct)
 	}); err != nil {

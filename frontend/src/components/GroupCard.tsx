@@ -2,7 +2,7 @@ import { useState, useRef } from 'react'
 import { ExternalLink, RefreshCw, Merge, Link2, EyeOff, FileVideo, Check, Download, HelpCircle, ChevronDown, ChevronUp, AlertTriangle, Tag, Layers } from 'lucide-react'
 import * as api from '../api/client'
 import type { GroupResponse } from '../api/client'
-import { useLightbox } from './Lightbox'
+import { useLightbox, type LightboxItem } from './Lightbox'
 
 interface Props {
   group: GroupResponse
@@ -23,17 +23,23 @@ export default function GroupCard({ group, pipelineId, onAction }: Props) {
 
   const meta = group.scrape.meta
   const allReady = group.allReady
-  const anyDownloading = group.items.some((i) => !i.ready && i.downloadPct > 0)
   const busy = group.task === 'merging' || group.task === 'linking'
   const canAct = allReady && !busy && group.scrape.status === 'success'
   const totalGB = group.totalSizeGB
   const isFailed = group.scrape.status === 'failed'
   const isUnknownLike = isFailed || !meta
 
-  const downloadingItems = group.items.filter((i) => !i.ready && i.downloadPct > 0)
-  const avgDownloadPct = downloadingItems.length > 0
-    ? Math.round(downloadingItems.reduce((s, i) => s + i.downloadPct, 0) / group.items.length)
-    : 0
+  const galleryItems: LightboxItem[] = meta?.coverURL
+    ? [
+        {
+          src: meta.coverURL,
+          width: imgRef.current?.naturalWidth || undefined,
+          height: imgRef.current?.naturalHeight || undefined,
+          msrc: imgRef.current?.currentSrc || undefined,
+        },
+        ...(meta.sampleImages || []).filter(Boolean).map((src) => ({ src })),
+      ]
+    : []
 
   const handleLink = async () => {
     const paths = [...selected]
@@ -57,10 +63,10 @@ export default function GroupCard({ group, pipelineId, onAction }: Props) {
   }
 
   return (
-    <div className="bg-[#1a1a1a] border border-gray-800 rounded-xl overflow-hidden hover:border-gray-700 transition">
+    <div className="bg-[#1a1a1a] border border-gray-800 rounded-xl overflow-hidden hover:border-gray-700 transition flex flex-col">
       {!isUnknownLike && meta?.coverURL ? (
         <div className="relative aspect-[16/9] overflow-hidden bg-black group/cover cursor-pointer"
-          onClick={() => lightbox.open([meta.coverURL!, ...(meta.sampleImages || [])].filter(Boolean), 0, imgRef.current || undefined)}>
+          onClick={() => lightbox.open(galleryItems, 0, imgRef.current || undefined)}>
           <img ref={imgRef} src={meta.coverURL} alt="" className="w-full h-full object-cover opacity-90 group-hover/cover:scale-105 transition-transform duration-300" />
           <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent" />
           {meta.pageURL && (
@@ -81,16 +87,6 @@ export default function GroupCard({ group, pipelineId, onAction }: Props) {
             </div>
             <StatusPill task={group.task} scrape={group.scrape.status} allReady={allReady} progress={group.taskProgress} />
           </div>
-          {group.task === 'merging' && group.taskProgress > 0 && (
-            <div className="absolute bottom-0 left-0 right-0 h-1 bg-gray-800">
-              <div className="h-full bg-indigo-500 transition-all" style={{ width: `${group.taskProgress}%` }} />
-            </div>
-          )}
-          {anyDownloading && !group.task && (
-            <div className="absolute bottom-0 left-0 right-0 h-1 bg-gray-800">
-              <div className="h-full bg-amber-500 transition-all" style={{ width: `${avgDownloadPct}%` }} />
-            </div>
-          )}
         </div>
       ) : (
         <div className="relative aspect-[16/9] overflow-hidden bg-[#111] flex items-center justify-center">
@@ -100,15 +96,10 @@ export default function GroupCard({ group, pipelineId, onAction }: Props) {
             <span className="text-white font-semibold text-sm">{group.number}</span>
             <StatusPill task={group.task} scrape={group.scrape.status} allReady={allReady} progress={group.taskProgress} />
           </div>
-          {anyDownloading && !group.task && (
-            <div className="absolute bottom-0 left-0 right-0 h-1 bg-gray-800">
-              <div className="h-full bg-amber-500 transition-all" style={{ width: `${avgDownloadPct}%` }} />
-            </div>
-          )}
         </div>
       )}
 
-      <div className="p-4 space-y-3">
+      <div className="p-4 space-y-3 flex-1 flex flex-col">
         {group.task === 'error' && group.taskErr && <div className="text-xs text-red-400">{group.taskErr}</div>}
 
         {group.scrape.status === 'success' && meta && (
@@ -149,24 +140,36 @@ export default function GroupCard({ group, pipelineId, onAction }: Props) {
 
         <div className="space-y-1">
           {group.items.map((item) => (
-            <label key={item.path} className="flex items-center gap-2 text-xs py-1.5 px-2 rounded hover:bg-[#222] cursor-pointer">
+            <label key={item.path} className="relative flex items-center gap-2 overflow-hidden rounded px-2 py-1.5 text-xs transition hover:bg-[#222] cursor-pointer">
+              {item.downloadPct > 0 && !item.ready && (
+                <div
+                  className="absolute inset-y-0 left-0 bg-amber-500/12 transition-all"
+                  style={{ width: `${item.downloadPct}%` }}
+                />
+              )}
+              {group.task === 'merging' && selected.has(item.path) && group.taskProgress > 0 && (
+                <div
+                  className="absolute inset-y-0 left-0 bg-indigo-500/12 transition-all"
+                  style={{ width: `${group.taskProgress}%` }}
+                />
+              )}
               <input type="checkbox" checked={selected.has(item.path)} disabled={!item.ready}
                 onChange={(e) => { const next = new Set(selected); e.target.checked ? next.add(item.path) : next.delete(item.path); setSelected(next) }}
-                className="rounded border-gray-700 bg-transparent text-indigo-500 focus:ring-indigo-500" />
-              <FileVideo size={12} className="text-gray-600 shrink-0" />
-              <span className="flex-1 text-gray-400 truncate">
+                className="relative z-10 rounded border-gray-700 bg-transparent text-indigo-500 focus:ring-indigo-500" />
+              <FileVideo size={12} className="relative z-10 text-gray-600 shrink-0" />
+              <span className="relative z-10 flex-1 text-gray-400 truncate">
                 {!item.ready && item.downloadPct > 0 && <span className="text-amber-400 mr-1">{item.downloadPct}%</span>}
                 {item.ready && <span className="text-emerald-400 mr-1">✓</span>}
                 {item.filename}
               </span>
-              {item.resolution && <span className="px-1 py-0.5 bg-gray-800 text-gray-500 rounded text-[10px] hidden sm:inline">{item.resolution}</span>}
-              {item.videoCodec && <span className="px-1 py-0.5 bg-gray-800 text-gray-500 rounded text-[10px] hidden sm:inline">{item.videoCodec}</span>}
-              <span className="text-gray-600 whitespace-nowrap">{item.sizeGB.toFixed(2)} GB</span>
+              {item.resolution && <span className="relative z-10 px-1 py-0.5 bg-gray-800 text-gray-500 rounded text-[10px] hidden sm:inline">{item.resolution}</span>}
+              {item.videoCodec && <span className="relative z-10 px-1 py-0.5 bg-gray-800 text-gray-500 rounded text-[10px] hidden sm:inline">{item.videoCodec}</span>}
+              <span className="relative z-10 text-gray-600 whitespace-nowrap">{item.sizeGB.toFixed(2)} GB</span>
             </label>
           ))}
         </div>
 
-        <div className="flex items-center justify-between pt-2 border-t border-gray-800">
+        <div className="flex items-center justify-between pt-2 border-t border-gray-800 mt-auto">
           <span className="text-xs text-gray-600">{group.items.length} files, {totalGB.toFixed(2)} GB</span>
           <div className="flex gap-1.5">
             {!busy && (

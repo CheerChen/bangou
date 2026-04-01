@@ -316,18 +316,7 @@ func (reg *Registry) SetupAria2(ctx context.Context, store committed.Store) {
 	}
 
 	aria2 := scanner.NewAria2Client(cfg.RPCURL, cfg.Token, scanAll, func(downloads []scanner.DownloadProgress) {
-		for _, rt := range reg.All() {
-			activeFilenames := make(map[string]bool)
-			for _, d := range downloads {
-				// Match download to pipeline by checking if path is under its inputDir
-				if strings.HasPrefix(d.Path, rt.Pipeline.InputDir) {
-					fn := filepath.Base(d.Path)
-					activeFilenames[fn] = true
-					rt.Manager.SetDownloadProgress(fn, d.Pct, d.Completed, d.Status)
-				}
-			}
-			rt.Manager.ClearDownloadProgress(activeFilenames)
-		}
+		distributeDownloadProgress(reg.All(), downloads)
 	})
 	go aria2.Run(ctx)
 }
@@ -364,6 +353,47 @@ func metadataToMovie(m *committed.Metadata) *provider.MovieMetadata {
 		PageURL:      m.PageURL,
 		ContentID:    m.ContentID,
 		Provider:     m.Provider,
+	}
+}
+
+func distributeDownloadProgress(runtimes []*PipelineRuntime, downloads []scanner.DownloadProgress) {
+	activeByRuntime := make(map[*PipelineRuntime]map[string]bool, len(runtimes))
+	for _, rt := range runtimes {
+		activeByRuntime[rt] = make(map[string]bool)
+	}
+
+	for _, d := range downloads {
+		downloadPath := filepath.Clean(d.Path)
+		type progressMatch struct {
+			rt       *PipelineRuntime
+			filename string
+		}
+		var matches []progressMatch
+		for _, rt := range runtimes {
+			if matchedName := rt.Manager.ResolveDownload(downloadPath); matchedName != "" {
+				matches = append(matches, progressMatch{rt: rt, filename: matchedName})
+			}
+		}
+
+		switch len(matches) {
+		case 0:
+			log.Printf("aria2: unmatched progress path=%s pct=%d status=%s", downloadPath, d.Pct, d.Status)
+		case 1:
+			match := matches[0]
+			if matchedName := match.rt.Manager.SetDownloadProgress(downloadPath, d.Pct, d.Completed, d.Status); matchedName != "" {
+				activeByRuntime[match.rt][matchedName] = true
+			}
+		default:
+			names := make([]string, 0, len(matches))
+			for _, match := range matches {
+				names = append(names, match.rt.Pipeline.Name+":"+match.filename)
+			}
+			log.Printf("aria2: ambiguous progress path=%s pct=%d status=%s matches=%s", downloadPath, d.Pct, d.Status, strings.Join(names, ","))
+		}
+	}
+
+	for _, rt := range runtimes {
+		rt.Manager.ClearDownloadProgress(activeByRuntime[rt])
 	}
 }
 

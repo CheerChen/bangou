@@ -8,11 +8,15 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
 
 const dmmAPIURL = "https://api.dmm.com/affiliate/v3/ItemList"
+
+var dmmIdentifierRe = regexp.MustCompile(`(?i)([a-z]{2,6})(\d{3,6})`)
 
 type DMM struct {
 	apiID       string
@@ -107,8 +111,14 @@ func (d *DMM) searchOnce(ctx context.Context, keyword string) (*dmmItem, error) 
 		return nil, nil
 	}
 	log.Printf("[dmm] GET keyword=%s -> %d items", keyword, len(result.Result.Items))
-	result.Result.Items[0].rawBody = body
-	return &result.Result.Items[0], nil
+
+	item := selectDMMItem(keyword, result.Result.Items)
+	if item == nil {
+		log.Printf("[dmm] GET keyword=%s -> 0 matched items after filtering", keyword)
+		return nil, nil
+	}
+	item.rawBody = body
+	return item, nil
 }
 
 func (d *DMM) toMetadata(number string, item *dmmItem) *MovieMetadata {
@@ -174,6 +184,7 @@ type dmmResult struct {
 
 type dmmItem struct {
 	ContentID      string            `json:"content_id"`
+	ProductID      string            `json:"product_id"`
 	Title          string            `json:"title"`
 	Date           string            `json:"date"`
 	Volume         string            `json:"volume"` // runtime in minutes
@@ -216,4 +227,71 @@ type dmmItemInfo struct {
 type dmmNameID struct {
 	ID   int    `json:"id"`
 	Name string `json:"name"`
+}
+
+func selectDMMItem(keyword string, items []dmmItem) *dmmItem {
+	matchKeys := buildDMMMatchKeys(keyword)
+	for i := range items {
+		if dmmItemMatches(matchKeys, &items[i]) {
+			return &items[i]
+		}
+	}
+	return nil
+}
+
+func dmmItemMatches(matchKeys map[string]struct{}, item *dmmItem) bool {
+	if len(matchKeys) == 0 || item == nil {
+		return false
+	}
+	for _, field := range []string{item.ContentID, item.ProductID} {
+		for key := range buildDMMMatchKeys(field) {
+			if _, ok := matchKeys[key]; ok {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func buildDMMMatchKeys(s string) map[string]struct{} {
+	compact := compactDMMIdentifier(s)
+	if compact == "" {
+		return nil
+	}
+
+	keys := map[string]struct{}{
+		compact: {},
+	}
+
+	for _, match := range dmmIdentifierRe.FindAllStringSubmatch(compact, -1) {
+		if len(match) < 3 {
+			continue
+		}
+		keys[strings.ToLower(match[1])+trimDMMLeadingZeros(match[2])] = struct{}{}
+	}
+	return keys
+}
+
+func compactDMMIdentifier(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+		case r >= 'A' && r <= 'Z':
+			b.WriteRune(r + ('a' - 'A'))
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func trimDMMLeadingZeros(s string) string {
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return s
+	}
+	return strconv.Itoa(n)
 }

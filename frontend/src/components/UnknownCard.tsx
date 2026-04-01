@@ -22,7 +22,7 @@ export default function UnknownCard({ file, pipelineId, onAction }: Props) {
   }
 
   return (
-    <div className="bg-[#1a1a1a] border border-gray-800 rounded-xl overflow-hidden hover:border-gray-700 transition">
+    <div className="bg-[#1a1a1a] border border-gray-800 rounded-xl overflow-hidden hover:border-gray-700 transition flex flex-col">
       <div className="relative aspect-[16/9] overflow-hidden bg-[#111] flex items-center justify-center">
         <HelpCircle size={48} className="text-gray-800" />
         <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent" />
@@ -31,9 +31,9 @@ export default function UnknownCard({ file, pipelineId, onAction }: Props) {
           <span className="text-xs text-gray-500">{file.sizeGB.toFixed(2)} GB</span>
         </div>
       </div>
-      <div className="p-4 space-y-3">
+      <div className="p-4 space-y-3 flex-1 flex flex-col">
         <div className="text-xs text-gray-500">Unable to parse a number from this filename.</div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 mt-auto">
           <input type="text" value={number} onChange={(e) => setNumber(e.target.value)} placeholder="e.g. SIVR-476"
             onKeyDown={(e) => e.key === 'Enter' && handleTag()}
             className="flex-1 px-3 py-1.5 bg-[#111] border border-gray-700 rounded-lg text-white text-sm placeholder-gray-700 focus:border-indigo-500 focus:outline-none" />
