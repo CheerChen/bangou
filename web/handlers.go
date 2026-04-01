@@ -79,7 +79,7 @@ func (h *Handlers) ListPipelines(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]PipelineResponse, 0, len(pipes))
 	for _, p := range pipes {
-		_, libCount, _ := h.store.ListOutputsByPipeline(ctx, p.ID, 0, 0)
+		_, libCount, _ := h.store.ListOutputsByPipeline(ctx, p.ID, 0, 0, "", "")
 		pending := 0
 		if rt := h.registry.Get(p.ID); rt != nil {
 			pending = len(rt.Manager.ListGroups()) + len(rt.Manager.ListUnknowns())
@@ -535,6 +535,12 @@ type LibraryItemResponse struct {
 	SrcPath      string   `json:"srcPath"`
 	LinkPath     string   `json:"linkPath"`
 	LinkType     string   `json:"linkType"`
+	FileSize     int64    `json:"fileSize"`
+	Resolution   string   `json:"resolution,omitempty"`
+	VideoCodec   string   `json:"videoCodec,omitempty"`
+	AudioCodec   string   `json:"audioCodec,omitempty"`
+	Duration     string   `json:"duration,omitempty"`
+	Bitrate      string   `json:"bitrate,omitempty"`
 	Alive        bool     `json:"alive"`
 	Title        string   `json:"title,omitempty"`
 	Actors       string   `json:"actors,omitempty"`
@@ -545,6 +551,7 @@ type LibraryItemResponse struct {
 	ReviewCount  int      `json:"reviewCount"`
 	PageURL      string   `json:"pageURL,omitempty"`
 	Maker        string   `json:"maker,omitempty"`
+	Premiered    string   `json:"premiered,omitempty"`
 	Year         string   `json:"year,omitempty"`
 	Runtime      string   `json:"runtime,omitempty"`
 	Provider     string   `json:"provider,omitempty"`
@@ -573,7 +580,9 @@ func (h *Handlers) ListLibrary(w http.ResponseWriter, r *http.Request) {
 		page = 0
 	}
 
-	outputs, total, err := h.store.ListOutputsByPipeline(ctx, id, size, page*size)
+	sort := r.URL.Query().Get("sort")   // "added", "number", "year", "rating"
+	order := r.URL.Query().Get("order") // "asc", "desc"
+	outputs, total, err := h.store.ListOutputsByPipeline(ctx, id, size, page*size, sort, order)
 	if err != nil {
 		writeError(w, 500, err.Error())
 		return
@@ -584,7 +593,9 @@ func (h *Handlers) ListLibrary(w http.ResponseWriter, r *http.Request) {
 	for _, o := range outputs {
 		lv := LibraryItemResponse{
 			ID: o.ID, Number: o.Number, SrcPath: o.SrcPath, LinkPath: o.LinkPath,
-			LinkType: o.LinkType, Alive: o.Alive,
+			LinkType: o.LinkType, FileSize: o.FileSize, Resolution: o.Resolution,
+			VideoCodec: o.VideoCodec, AudioCodec: o.AudioCodec, Duration: o.Duration,
+			Bitrate: o.Bitrate, Alive: o.Alive,
 		}
 		meta, ok := metaCache[o.Number]
 		if !ok {
@@ -600,6 +611,7 @@ func (h *Handlers) ListLibrary(w http.ResponseWriter, r *http.Request) {
 			lv.ReviewCount = meta.ReviewCount
 			lv.PageURL = meta.PageURL
 			lv.Maker = meta.Maker
+			lv.Premiered = meta.Premiered
 			lv.Year = meta.Year
 			lv.Runtime = meta.Runtime
 			if meta.Genres != "" {

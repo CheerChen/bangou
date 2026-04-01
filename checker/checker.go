@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/CheerChen/bangou/committed"
+	"github.com/CheerChen/bangou/scanner"
 )
 
 func CheckLink(path string) bool {
@@ -14,7 +15,6 @@ func CheckLink(path string) bool {
 	return err == nil
 }
 
-// detectActualLinkType checks whether the file at path is a symlink or hardlink.
 func detectActualLinkType(path string) string {
 	fi, err := os.Lstat(path)
 	if err != nil {
@@ -27,8 +27,8 @@ func detectActualLinkType(path string) string {
 }
 
 func Run(ctx context.Context, s committed.Store, interval time.Duration) {
-	// Fix link types and src_path on startup
 	fixOutputRecords(ctx, s)
+	backfillMediaInfo(ctx, s)
 
 	t := time.NewTicker(interval)
 	defer t.Stop()
@@ -64,8 +64,6 @@ func check(ctx context.Context, s committed.Store) {
 	}
 }
 
-// fixOutputRecords scans all outputs and corrects link_type and src_path
-// to match what's actually on disk.
 func fixOutputRecords(ctx context.Context, s committed.Store) {
 	outputs, err := s.ListAllOutputs(ctx)
 	if err != nil {
@@ -78,8 +76,6 @@ func fixOutputRecords(ctx context.Context, s committed.Store) {
 		if actual == "" {
 			continue
 		}
-
-		// Fix link type
 		if actual != o.LinkType {
 			if err := s.SetOutputLinkType(ctx, o.ID, actual); err != nil {
 				log.Printf("checker fix link type(%d): %v", o.ID, err)
@@ -88,8 +84,6 @@ func fixOutputRecords(ctx context.Context, s committed.Store) {
 				fixed++
 			}
 		}
-
-		// Fix src_path: for symlinks, read the target; hardlinks can't be resolved
 		if o.SrcPath == "" && actual == "symlink" {
 			if target, err := os.Readlink(o.LinkPath); err == nil && target != "" {
 				if err := s.SetOutputSrcPath(ctx, o.ID, target); err != nil {
@@ -103,5 +97,54 @@ func fixOutputRecords(ctx context.Context, s committed.Store) {
 	}
 	if fixed > 0 {
 		log.Printf("checker: fixed %d output records", fixed)
+	}
+}
+
+// backfillMediaInfo probes files for outputs missing media info and updates the DB.
+func backfillMediaInfo(ctx context.Context, s committed.Store) {
+	outputs, err := s.ListAllOutputs(ctx)
+	if err != nil {
+		log.Printf("checker backfill: %v", err)
+		return
+	}
+	filled := 0
+	for _, o := range outputs {
+		if o.Resolution != "" {
+			continue // already has media info
+		}
+		if !o.Alive {
+			continue // file missing, can't probe
+		}
+
+		// Probe the actual file (follow symlinks via link_path)
+		probePath := o.LinkPath
+		media, err := scanner.Probe(probePath)
+		if err != nil {
+			log.Printf("checker backfill %s: probe failed: %v", o.Number, err)
+			continue
+		}
+		if media == nil {
+			continue
+		}
+
+		// Get file size
+		fi, err := os.Stat(probePath)
+		var fileSize int64
+		if err == nil {
+			fileSize = fi.Size()
+		}
+		if fileSize > 0 && media.Duration > 0 {
+			media.BitrateBps = int64(float64(fileSize*8) / media.Duration)
+		}
+
+		if err := s.SetOutputMedia(ctx, o.ID, fileSize, media.Resolution(), media.VideoCodec, media.AudioCodec, media.DurationText(), media.BitrateText()); err != nil {
+			log.Printf("checker backfill %s: update failed: %v", o.Number, err)
+			continue
+		}
+		log.Printf("checker: backfilled %s media: %s %s %s", o.Number, media.Resolution(), media.VideoCodec, media.BitrateText())
+		filled++
+	}
+	if filled > 0 {
+		log.Printf("checker: backfilled media info for %d outputs", filled)
 	}
 }

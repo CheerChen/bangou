@@ -55,6 +55,13 @@ type ScrapeResult struct {
 func Chain(ctx context.Context, providers []Provider, p Predict) *ScrapeResult {
 	log.Printf("[scrape] start number=%s raw=%s", p.Number, p.RawNumber)
 	out := &ScrapeResult{Errors: map[string]string{}}
+
+	// Index providers by name for supplemental lookup
+	byName := map[string]Provider{}
+	for _, prov := range providers {
+		byName[prov.Name()] = prov
+	}
+
 	for _, prov := range providers {
 		meta, err := prov.Scrape(ctx, p)
 		if err != nil {
@@ -64,11 +71,41 @@ func Chain(ctx context.Context, providers []Provider, p Predict) *ScrapeResult {
 		if meta != nil {
 			meta.Provider = prov.Name()
 			out.Meta = meta
+
+			// If primary result is from DMM and avwiki is also enabled, supplement
+			if prov.Name() == "dmm" {
+				if aw, ok := byName["avwiki"]; ok {
+					supplementFromAVWiki(ctx, aw, p, meta)
+				}
+			}
 			return out
 		}
 		out.Errors[prov.Name()] = "not found"
 	}
 	return out
+}
+
+// supplementFromAVWiki queries avwiki to fill in missing actors and override premiered date.
+func supplementFromAVWiki(ctx context.Context, aw Provider, p Predict, meta *MovieMetadata) {
+	awMeta, err := aw.Scrape(ctx, p)
+	if err != nil || awMeta == nil {
+		log.Printf("[scrape] avwiki supplement for %s: skipped (%v)", p.Number, err)
+		return
+	}
+	log.Printf("[scrape] avwiki supplement for %s: got actors=%v premiered=%s", p.Number, awMeta.Actors, awMeta.Premiered)
+
+	// Always use avwiki's date if available
+	if awMeta.Premiered != "" {
+		meta.Premiered = awMeta.Premiered
+		if len(awMeta.Premiered) >= 4 {
+			meta.Year = awMeta.Premiered[:4]
+		}
+	}
+
+	// Fill actors if DMM has none
+	if len(meta.Actors) == 0 && len(awMeta.Actors) > 0 {
+		meta.Actors = awMeta.Actors
+	}
 }
 
 var coverHTTPClient = &http.Client{Timeout: 30 * time.Second}

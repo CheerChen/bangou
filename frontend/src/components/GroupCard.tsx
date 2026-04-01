@@ -1,7 +1,8 @@
-import { useState } from 'react'
-import { ExternalLink, RefreshCw, Merge, Link2, EyeOff, FileVideo, Check, Download, HelpCircle, ChevronDown, ChevronUp, AlertTriangle, Tag } from 'lucide-react'
+import { useState, useRef } from 'react'
+import { ExternalLink, RefreshCw, Merge, Link2, EyeOff, FileVideo, Check, Download, HelpCircle, ChevronDown, ChevronUp, AlertTriangle, Tag, Layers } from 'lucide-react'
 import * as api from '../api/client'
 import type { GroupResponse } from '../api/client'
+import { useLightbox } from './Lightbox'
 
 interface Props {
   group: GroupResponse
@@ -17,6 +18,8 @@ export default function GroupCard({ group, pipelineId, onAction }: Props) {
   })
   const [errorsOpen, setErrorsOpen] = useState(false)
   const [tagInput, setTagInput] = useState('')
+  const lightbox = useLightbox()
+  const imgRef = useRef<HTMLImageElement>(null)
 
   const meta = group.scrape.meta
   const allReady = group.allReady
@@ -56,15 +59,21 @@ export default function GroupCard({ group, pipelineId, onAction }: Props) {
   return (
     <div className="bg-[#1a1a1a] border border-gray-800 rounded-xl overflow-hidden hover:border-gray-700 transition">
       {!isUnknownLike && meta?.coverURL ? (
-        <div className="relative aspect-[16/9] overflow-hidden bg-black">
-          <img src={meta.coverURL} alt="" className="w-full h-full object-cover opacity-90" />
+        <div className="relative aspect-[16/9] overflow-hidden bg-black group/cover cursor-pointer"
+          onClick={() => lightbox.open([meta.coverURL!, ...(meta.sampleImages || [])].filter(Boolean), 0, imgRef.current || undefined)}>
+          <img ref={imgRef} src={meta.coverURL} alt="" className="w-full h-full object-cover opacity-90 group-hover/cover:scale-105 transition-transform duration-300" />
           <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent" />
           {meta.pageURL && (
-            <a href={meta.pageURL} target="_blank" rel="noopener"
+            <a href={meta.pageURL} target="_blank" rel="noopener" onClick={(e) => e.stopPropagation()}
               className="absolute top-3 right-3 p-1.5 bg-black/50 hover:bg-black/80 rounded-lg text-gray-400 hover:text-white transition">
               <ExternalLink size={14} />
             </a>
           )}
+          {(() => { const count = 1 + (meta.sampleImages?.length || 0); return count > 1 ? (
+            <span className="absolute top-3 left-3 flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-amber-500/80 text-[10px] font-bold text-white">
+              <Layers size={10} />{count}
+            </span>
+          ) : null })()}
           <div className="absolute bottom-3 left-3 right-3 flex items-end justify-between">
             <div>
               <span className="text-white font-semibold text-sm">{group.number}</span>
@@ -106,7 +115,7 @@ export default function GroupCard({ group, pipelineId, onAction }: Props) {
           <>
             <div className="text-sm text-gray-300 line-clamp-2">{meta.title}</div>
             <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
-              {meta.maker && <><dt className="text-gray-600">Info</dt><dd className="text-gray-400">{meta.maker} / {meta.year} / {meta.runtime}min</dd></>}
+              {meta.maker && <><dt className="text-gray-600">Info</dt><dd className="text-gray-400">{meta.maker} / {meta.premiered || meta.year} / {meta.runtime}min</dd></>}
               {meta.actors && meta.actors.length > 0 && <><dt className="text-gray-600">Actors</dt><dd className="text-gray-400">{meta.actors.join(', ')}</dd></>}
             </dl>
             {meta.genres && meta.genres.length > 0 && (

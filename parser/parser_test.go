@@ -54,6 +54,16 @@ func TestParse(t *testing.T) {
 			want:     ParsedFile{Number: "HNVR-141", RawNumber: "hnvr00141", Part: 3, Tags: nil, Ext: ".mp4", SourceSite: "4k2.com"},
 		},
 		{
+			name:     "hash suffix no separator",
+			filename: "mdvr00271vrv18khia2.mp4",
+			want:     ParsedFile{Number: "MDVR-271", RawNumber: "mdvr00271", Part: 0, Ext: ".mp4"},
+		},
+		{
+			name:     "hash suffix no separator 2",
+			filename: "savr00304vrv1uhqf2.mp4",
+			want:     ParsedFile{Number: "SAVR-304", RawNumber: "savr00304", Part: 0, Ext: ".mp4"},
+		},
+		{
 			name:     "unrecognizable",
 			filename: "random_video_2025.mp4",
 			want:     ParsedFile{Ext: ".mp4"},

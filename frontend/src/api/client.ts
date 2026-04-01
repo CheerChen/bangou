@@ -175,6 +175,12 @@ export interface LibraryItemResponse {
   srcPath: string
   linkPath: string
   linkType: string
+  fileSize: number
+  resolution?: string
+  videoCodec?: string
+  audioCodec?: string
+  duration?: string
+  bitrate?: string
   alive: boolean
   title?: string
   actors?: string
@@ -185,13 +191,14 @@ export interface LibraryItemResponse {
   reviewCount: number
   pageURL?: string
   maker?: string
+  premiered?: string
   year?: string
   runtime?: string
   provider?: string
 }
 
-export const listLibrary = (pipelineId: number, page = 0, size = 12) =>
-  request<LibraryPage>('GET', `/pipelines/${pipelineId}/library?page=${page}&size=${size}`)
+export const listLibrary = (pipelineId: number, page = 0, size = 12, sort = 'added', order = 'desc') =>
+  request<LibraryPage>('GET', `/pipelines/${pipelineId}/library?page=${page}&size=${size}&sort=${sort}&order=${order}`)
 
 // ── Library Actions ──
 

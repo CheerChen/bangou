@@ -83,6 +83,24 @@ func NewSQLite(dsn string) (*SQLiteStore, error) {
 			return nil, fmt.Errorf("migrate metadata.pipeline_id: %w", err)
 		}
 	}
+	// v5 migration: media info columns on outputs
+	mediaCols := []struct{ name, def string }{
+		{"file_size", "INTEGER NOT NULL DEFAULT 0"},
+		{"resolution", "TEXT NOT NULL DEFAULT ''"},
+		{"video_codec", "TEXT NOT NULL DEFAULT ''"},
+		{"audio_codec", "TEXT NOT NULL DEFAULT ''"},
+		{"duration", "TEXT NOT NULL DEFAULT ''"},
+		{"bitrate", "TEXT NOT NULL DEFAULT ''"},
+	}
+	for _, col := range mediaCols {
+		if ok, _ := hasColumn(db, "outputs", col.name); !ok {
+			if _, err := db.Exec(fmt.Sprintf("ALTER TABLE outputs ADD COLUMN %s %s", col.name, col.def)); err != nil {
+				db.Close()
+				return nil, fmt.Errorf("migrate outputs.%s: %w", col.name, err)
+			}
+		}
+	}
+
 	// Migrate legacy settings into pipeline + provider_configs
 	if err := migrateSettingsToPipeline(db); err != nil {
 		log.Printf("warn: settings migration: %v", err)
@@ -285,9 +303,11 @@ func (s *SQLiteStore) ListProviderConfigs(ctx context.Context) ([]ProviderConfig
 
 func (s *SQLiteStore) CreateOutput(ctx context.Context, o *Output) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO outputs (pipeline_id, number, src_path, link_path, link_type, alive, created_at, checked_at)
-		 VALUES (?, ?, ?, ?, ?, TRUE, ?, ?)`,
-		o.PipelineID, o.Number, o.SrcPath, o.LinkPath, o.LinkType, time.Now(), time.Now(),
+		`INSERT INTO outputs (pipeline_id, number, src_path, link_path, link_type, file_size, resolution, video_codec, audio_codec, duration, bitrate, alive, created_at, checked_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE, ?, ?)`,
+		o.PipelineID, o.Number, o.SrcPath, o.LinkPath, o.LinkType,
+		o.FileSize, o.Resolution, o.VideoCodec, o.AudioCodec, o.Duration, o.Bitrate,
+		time.Now(), time.Now(),
 	)
 	return err
 }
@@ -297,31 +317,62 @@ func (s *SQLiteStore) DeleteOutput(ctx context.Context, id int64) error {
 	return err
 }
 
-const outputCols = `id, pipeline_id, number, src_path, link_path, link_type, alive, created_at, checked_at`
+const outputCols = `id, pipeline_id, number, src_path, link_path, link_type, file_size, resolution, video_codec, audio_codec, duration, bitrate, alive, created_at, checked_at`
 
 func scanOutput(rows *sql.Rows) (Output, error) {
 	var o Output
-	err := rows.Scan(&o.ID, &o.PipelineID, &o.Number, &o.SrcPath, &o.LinkPath, &o.LinkType, &o.Alive, &o.CreatedAt, &o.CheckedAt)
+	err := rows.Scan(&o.ID, &o.PipelineID, &o.Number, &o.SrcPath, &o.LinkPath, &o.LinkType,
+		&o.FileSize, &o.Resolution, &o.VideoCodec, &o.AudioCodec, &o.Duration, &o.Bitrate,
+		&o.Alive, &o.CreatedAt, &o.CheckedAt)
 	return o, err
 }
 
-func (s *SQLiteStore) ListOutputsByPipeline(ctx context.Context, pipelineID int64, limit, offset int) ([]Output, int, error) {
+func (s *SQLiteStore) ListOutputsByPipeline(ctx context.Context, pipelineID int64, limit, offset int, sort, order string) ([]Output, int, error) {
 	var total int
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM outputs WHERE pipeline_id = ?`, pipelineID).Scan(&total); err != nil {
 		return nil, 0, err
 	}
-	rows, err := s.db.QueryContext(ctx,
-		fmt.Sprintf(`SELECT %s FROM outputs WHERE pipeline_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?`, outputCols),
-		pipelineID, limit, offset,
-	)
+	if limit <= 0 {
+		return nil, total, nil
+	}
+
+	// Resolve sort column (LEFT JOIN metadata for number/year/rating)
+	orderClause := "o.created_at DESC"
+	dir := "DESC"
+	if order == "asc" {
+		dir = "ASC"
+	}
+	switch sort {
+	case "number":
+		orderClause = "o.number " + dir
+	case "date":
+		orderClause = "COALESCE(m.premiered, m.year, '') " + dir + ", o.created_at DESC"
+	case "rating":
+		orderClause = "CAST(COALESCE(NULLIF(m.rating,''),'0') AS REAL) " + dir + ", o.created_at DESC"
+	default: // "added"
+		orderClause = "o.created_at " + dir
+	}
+
+	query := fmt.Sprintf(
+		`SELECT o.id, o.pipeline_id, o.number, o.src_path, o.link_path, o.link_type,
+		        o.file_size, o.resolution, o.video_codec, o.audio_codec, o.duration, o.bitrate,
+		        o.alive, o.created_at, o.checked_at
+		 FROM outputs o LEFT JOIN metadata m ON o.number = m.number
+		 WHERE o.pipeline_id = ?
+		 ORDER BY %s
+		 LIMIT ? OFFSET ?`, orderClause)
+
+	rows, err := s.db.QueryContext(ctx, query, pipelineID, limit, offset)
 	if err != nil {
 		return nil, 0, err
 	}
 	defer rows.Close()
 	var out []Output
 	for rows.Next() {
-		o, err := scanOutput(rows)
-		if err != nil {
+		var o Output
+		if err := rows.Scan(&o.ID, &o.PipelineID, &o.Number, &o.SrcPath, &o.LinkPath, &o.LinkType,
+			&o.FileSize, &o.Resolution, &o.VideoCodec, &o.AudioCodec, &o.Duration, &o.Bitrate,
+			&o.Alive, &o.CreatedAt, &o.CheckedAt); err != nil {
 			return nil, 0, err
 		}
 		out = append(out, o)
@@ -363,6 +414,13 @@ func (s *SQLiteStore) SetOutputLinkType(ctx context.Context, id int64, linkType 
 
 func (s *SQLiteStore) SetOutputSrcPath(ctx context.Context, id int64, srcPath string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE outputs SET src_path = ? WHERE id = ?`, srcPath, id)
+	return err
+}
+
+func (s *SQLiteStore) SetOutputMedia(ctx context.Context, id int64, fileSize int64, resolution, videoCodec, audioCodec, duration, bitrate string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE outputs SET file_size=?, resolution=?, video_codec=?, audio_codec=?, duration=?, bitrate=? WHERE id=?`,
+		fileSize, resolution, videoCodec, audioCodec, duration, bitrate, id)
 	return err
 }
 
