@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -75,6 +76,9 @@ func (e *Executor) Link(ctx context.Context, number string, selectedPaths []stri
 	selected := filterItems(group.Items, selectedPaths)
 	if len(selected) == 0 {
 		return fmt.Errorf("no matching files for %s", number)
+	}
+	if err := validateSingleExtensionSelection(selected); err != nil {
+		return fmt.Errorf("link selection invalid for %s: %w", number, err)
 	}
 
 	// Resolve options
@@ -157,9 +161,16 @@ func (e *Executor) Merge(ctx context.Context, number string, selectedPaths []str
 	if len(selected) < 2 {
 		return fmt.Errorf("need 2+ files to merge %s", number)
 	}
+	if hasMixedMKVAndMP4(group.Items) {
+		return fmt.Errorf("merge is disabled for mixed mkv/mp4 groups")
+	}
 
 	inputDir := filepath.Dir(selected[0].File.Path)
-	mergedPath := filepath.Join(inputDir, number+".mkv")
+	mergeTag, err := buildMergeSourceTag(selected)
+	if err != nil {
+		return fmt.Errorf("invalid merge selection for %s: %w", number, err)
+	}
+	mergedPath := filepath.Join(inputDir, number+"_"+mergeTag+".mkv")
 
 	parts := make([]string, 0, len(selected))
 	var totalSize int64
@@ -179,27 +190,27 @@ func (e *Executor) Merge(ctx context.Context, number string, selectedPaths []str
 	return nil
 }
 
-// Unlink removes link files, nfo, cover, and raw from the output directory.
-func (e *Executor) Unlink(ctx context.Context, number string, outputID int64) error {
+// Unlink removes exactly one linked output file by its recorded linkPath.
+func (e *Executor) Unlink(ctx context.Context, output *committed.Output) error {
+	if output == nil {
+		return fmt.Errorf("nil output")
+	}
+	number := strings.ToUpper(strings.TrimSpace(output.Number))
 	log.Printf("[unlink] %s: start", number)
 
-	outDir := filepath.Join(e.outputDir, number)
-	entries, err := os.ReadDir(outDir)
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("read dir: %w", err)
+	linkPath := strings.TrimSpace(output.LinkPath)
+	if linkPath == "" {
+		return fmt.Errorf("empty link path")
 	}
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
+	if err := os.Remove(linkPath); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("link file not found: %s", linkPath)
 		}
-		path := filepath.Join(outDir, entry.Name())
-		log.Printf("[unlink] %s: removing %s", number, entry.Name())
-		if err := os.Remove(path); err != nil {
-			log.Printf("[unlink] %s: warn: %v", number, err)
-		}
+		return fmt.Errorf("remove link file: %w", err)
 	}
+	log.Printf("[unlink] %s: removed %s", number, filepath.Base(linkPath))
 
-	if err := e.store.DeleteOutput(ctx, outputID); err != nil {
+	if err := e.store.DeleteOutput(ctx, output.ID); err != nil {
 		return fmt.Errorf("delete output: %w", err)
 	}
 	log.Printf("[unlink] %s: done", number)
@@ -305,6 +316,82 @@ func filterItems(items []staging.StagedItem, paths []string) []staging.StagedIte
 		}
 	}
 	return out
+}
+
+func buildMergeSourceTag(selected []staging.StagedItem) (string, error) {
+	if len(selected) == 0 {
+		return "", fmt.Errorf("no selected files")
+	}
+
+	withPart := 0
+	for _, item := range selected {
+		if item.Parsed.Part > 0 {
+			withPart++
+		}
+	}
+	if withPart > 0 && withPart < len(selected) {
+		return "", fmt.Errorf("part numbers must be either all present or all absent")
+	}
+
+	var b strings.Builder
+	b.WriteString("m")
+
+	if withPart == 0 {
+		for i := 1; i <= len(selected); i++ {
+			b.WriteString(strconv.Itoa(i))
+		}
+		return b.String(), nil
+	}
+
+	seen := make(map[int]struct{}, len(selected))
+	for _, item := range selected {
+		p := item.Parsed.Part
+		if _, ok := seen[p]; ok {
+			return "", fmt.Errorf("duplicate part number: %d", p)
+		}
+		seen[p] = struct{}{}
+		b.WriteString(strconv.Itoa(p))
+	}
+	return b.String(), nil
+}
+
+func validateSingleExtensionSelection(selected []staging.StagedItem) error {
+	extSet := make(map[string]struct{}, len(selected))
+	for _, item := range selected {
+		ext := strings.ToLower(filepath.Ext(item.File.Filename))
+		if ext == "" {
+			ext = strings.ToLower(filepath.Ext(item.File.Path))
+		}
+		if ext == "" {
+			return fmt.Errorf("missing extension: %s", item.File.Filename)
+		}
+		extSet[ext] = struct{}{}
+		if len(extSet) > 1 {
+			return fmt.Errorf("multiple extensions selected")
+		}
+	}
+	return nil
+}
+
+func hasMixedMKVAndMP4(items []staging.StagedItem) bool {
+	hasMKV := false
+	hasMP4 := false
+	for _, item := range items {
+		ext := strings.ToLower(filepath.Ext(item.File.Filename))
+		if ext == "" {
+			ext = strings.ToLower(filepath.Ext(item.File.Path))
+		}
+		switch ext {
+		case ".mkv":
+			hasMKV = true
+		case ".mp4":
+			hasMP4 = true
+		}
+		if hasMKV && hasMP4 {
+			return true
+		}
+	}
+	return false
 }
 
 func detectLinkType(input, output string) string {

@@ -201,9 +201,6 @@ func (m *Manager) ListGroups() []StagingGroup {
 
 	out := make([]StagingGroup, 0, len(m.groups))
 	for _, g := range m.groups {
-		if g.Ignored {
-			continue
-		}
 		out = append(out, *copyGroup(g))
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -218,9 +215,6 @@ func (m *Manager) ListUnknowns() []UnknownFile {
 
 	out := make([]UnknownFile, 0, len(m.unknowns))
 	for _, u := range m.unknowns {
-		if u.Ignored {
-			continue
-		}
 		out = append(out, *u)
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -414,22 +408,6 @@ func singleMatch(matches map[string]struct{}) (string, bool) {
 		return filename, true
 	}
 	return "", false
-}
-
-func (m *Manager) SetIgnored(number string, ignored bool) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if g, ok := m.groups[number]; ok {
-		g.Ignored = ignored
-	}
-}
-
-func (m *Manager) SetUnknownIgnored(path string, ignored bool) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if u, ok := m.unknowns[path]; ok {
-		u.Ignored = ignored
-	}
 }
 
 func (m *Manager) ManualTag(path string, number string) {

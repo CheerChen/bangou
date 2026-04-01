@@ -39,6 +39,11 @@ type Output struct {
 	CheckedAt  time.Time
 }
 
+type OutputGroup struct {
+	Number  string
+	Outputs []Output
+}
+
 type MergedPart struct {
 	Number   string
 	Filename string

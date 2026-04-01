@@ -2,9 +2,12 @@ package web
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -79,7 +82,7 @@ func (h *Handlers) ListPipelines(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]PipelineResponse, 0, len(pipes))
 	for _, p := range pipes {
-		_, libCount, _ := h.store.ListOutputsByPipeline(ctx, p.ID, 0, 0, "", "")
+		_, libCount, _ := h.store.ListOutputGroupsByPipeline(ctx, p.ID, 0, 0, "", "")
 		pending := 0
 		if rt := h.registry.Get(p.ID); rt != nil {
 			pending = len(rt.Manager.ListGroups()) + len(rt.Manager.ListUnknowns())
@@ -143,6 +146,15 @@ func (h *Handlers) DeletePipeline(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		writeError(w, 400, "invalid id")
+		return
+	}
+	_, total, err := h.store.ListOutputsByPipeline(r.Context(), id, 0, 0, "", "")
+	if err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	if total > 0 {
+		writeError(w, 409, "pipeline has linked outputs; unlink first")
 		return
 	}
 	h.registry.StopPipeline(id)
@@ -231,7 +243,7 @@ func (h *Handlers) ListGroups(w http.ResponseWriter, r *http.Request) {
 	linkable := 0
 	for _, g := range groups {
 		gr := buildGroupResponse(g)
-		if gr.Scrape.Status == "success" && gr.AllReady && gr.Task == "" {
+		if isGroupLinkEligible(g) {
 			linkable++
 		}
 		grs = append(grs, gr)
@@ -300,6 +312,10 @@ func (h *Handlers) GroupLink(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "paths required")
 		return
 	}
+	if err := validateSingleExtensionPaths(req.Paths); err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
 	rt.Manager.SetTask(number, "linking", "")
 	go func() {
 		if err := rt.Executor.Link(context.Background(), number, req.Paths, rt.LinkOpts()); err != nil {
@@ -324,6 +340,15 @@ func (h *Handlers) GroupMerge(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "at least 2 paths required")
 		return
 	}
+	group := rt.Manager.GetGroup(number)
+	if group == nil {
+		writeError(w, 404, "group not found")
+		return
+	}
+	if hasMixedMKVAndMP4Group(group.Items) {
+		writeError(w, 400, "merge is disabled for mixed mkv/mp4 groups")
+		return
+	}
 	rt.Manager.SetTask(number, "merging", "")
 	go func() {
 		if err := rt.Executor.Merge(context.Background(), number, req.Paths); err != nil {
@@ -335,17 +360,6 @@ func (h *Handlers) GroupMerge(w http.ResponseWriter, r *http.Request) {
 		go rt.Scan(context.Background(), h.store)
 	}()
 	writeOK(w, map[string]string{"status": "merging"})
-}
-
-func (h *Handlers) GroupIgnore(w http.ResponseWriter, r *http.Request) {
-	rt, _, err := h.getRuntime(r)
-	if err != nil {
-		writeError(w, 404, err.Error())
-		return
-	}
-	number := strings.ToUpper(strings.TrimSpace(r.PathValue("number")))
-	rt.Manager.SetIgnored(number, true)
-	writeOK(w, map[string]string{"status": "ignored"})
 }
 
 func (h *Handlers) GroupRescrape(w http.ResponseWriter, r *http.Request) {
@@ -402,23 +416,6 @@ func (h *Handlers) UnknownTag(w http.ResponseWriter, r *http.Request) {
 	writeOK(w, map[string]string{"status": "tagged"})
 }
 
-func (h *Handlers) UnknownIgnore(w http.ResponseWriter, r *http.Request) {
-	rt, _, err := h.getRuntime(r)
-	if err != nil {
-		writeError(w, 404, err.Error())
-		return
-	}
-	var req struct {
-		Path string `json:"path"`
-	}
-	if err := readJSON(r, &req); err != nil || req.Path == "" {
-		writeError(w, 400, "path required")
-		return
-	}
-	rt.Manager.SetUnknownIgnored(req.Path, true)
-	writeOK(w, map[string]string{"status": "ignored"})
-}
-
 // ── Scan / Link All ──
 
 func (h *Handlers) TriggerScan(w http.ResponseWriter, r *http.Request) {
@@ -451,17 +448,7 @@ func (h *Handlers) LinkAll(w http.ResponseWriter, r *http.Request) {
 	groups := rt.Manager.ListGroups()
 	var eligible []string
 	for _, g := range groups {
-		if g.Scrape.Status != "success" || g.Task != "" {
-			continue
-		}
-		allReady := true
-		for _, item := range g.Items {
-			if !item.File.Ready {
-				allReady = false
-				break
-			}
-		}
-		if allReady {
+		if isGroupLinkEligible(g) {
 			eligible = append(eligible, g.Number)
 		}
 	}
@@ -529,39 +516,43 @@ func (h *Handlers) LinkAllProgress(w http.ResponseWriter, r *http.Request) {
 
 // ── Library ──
 
-type LibraryItemResponse struct {
-	ID           int64    `json:"id"`
-	Number       string   `json:"number"`
-	SrcPath      string   `json:"srcPath"`
-	LinkPath     string   `json:"linkPath"`
-	LinkType     string   `json:"linkType"`
-	FileSize     int64    `json:"fileSize"`
-	Resolution   string   `json:"resolution,omitempty"`
-	VideoCodec   string   `json:"videoCodec,omitempty"`
-	AudioCodec   string   `json:"audioCodec,omitempty"`
-	Duration     string   `json:"duration,omitempty"`
-	Bitrate      string   `json:"bitrate,omitempty"`
-	Alive        bool     `json:"alive"`
-	Title        string   `json:"title,omitempty"`
-	Actors       string   `json:"actors,omitempty"`
-	Genres       []string `json:"genres,omitempty"`
-	CoverURL     string   `json:"coverURL,omitempty"`
-	SampleImages []string `json:"sampleImages,omitempty"`
-	Rating       string   `json:"rating,omitempty"`
-	ReviewCount  int      `json:"reviewCount"`
-	PageURL      string   `json:"pageURL,omitempty"`
-	Maker        string   `json:"maker,omitempty"`
-	Premiered    string   `json:"premiered,omitempty"`
-	Year         string   `json:"year,omitempty"`
-	Runtime      string   `json:"runtime,omitempty"`
-	Provider     string   `json:"provider,omitempty"`
+type LibraryOutputResponse struct {
+	ID         int64  `json:"id"`
+	SrcPath    string `json:"srcPath"`
+	LinkPath   string `json:"linkPath"`
+	LinkType   string `json:"linkType"`
+	FileSize   int64  `json:"fileSize"`
+	Resolution string `json:"resolution,omitempty"`
+	VideoCodec string `json:"videoCodec,omitempty"`
+	AudioCodec string `json:"audioCodec,omitempty"`
+	Duration   string `json:"duration,omitempty"`
+	Bitrate    string `json:"bitrate,omitempty"`
+	Alive      bool   `json:"alive"`
+}
+
+type LibraryGroupResponse struct {
+	Number       string                  `json:"number"`
+	Outputs      []LibraryOutputResponse `json:"outputs"`
+	Title        string                  `json:"title,omitempty"`
+	Actors       string                  `json:"actors,omitempty"`
+	Genres       []string                `json:"genres,omitempty"`
+	CoverURL     string                  `json:"coverURL,omitempty"`
+	SampleImages []string                `json:"sampleImages,omitempty"`
+	Rating       string                  `json:"rating,omitempty"`
+	ReviewCount  int                     `json:"reviewCount"`
+	PageURL      string                  `json:"pageURL,omitempty"`
+	Maker        string                  `json:"maker,omitempty"`
+	Premiered    string                  `json:"premiered,omitempty"`
+	Year         string                  `json:"year,omitempty"`
+	Runtime      string                  `json:"runtime,omitempty"`
+	Provider     string                  `json:"provider,omitempty"`
 }
 
 type LibraryPageResponse struct {
-	Items []LibraryItemResponse `json:"items"`
-	Total int                   `json:"total"`
-	Page  int                   `json:"page"`
-	Size  int                   `json:"size"`
+	Items []LibraryGroupResponse `json:"items"`
+	Total int                    `json:"total"`
+	Page  int                    `json:"page"`
+	Size  int                    `json:"size"`
 }
 
 func (h *Handlers) ListLibrary(w http.ResponseWriter, r *http.Request) {
@@ -582,25 +573,32 @@ func (h *Handlers) ListLibrary(w http.ResponseWriter, r *http.Request) {
 
 	sort := r.URL.Query().Get("sort")   // "added", "number", "year", "rating"
 	order := r.URL.Query().Get("order") // "asc", "desc"
-	outputs, total, err := h.store.ListOutputsByPipeline(ctx, id, size, page*size, sort, order)
+	groups, total, err := h.store.ListOutputGroupsByPipeline(ctx, id, size, page*size, sort, order)
 	if err != nil {
 		writeError(w, 500, err.Error())
 		return
 	}
 
 	metaCache := map[string]*committed.Metadata{}
-	items := make([]LibraryItemResponse, 0, len(outputs))
-	for _, o := range outputs {
-		lv := LibraryItemResponse{
-			ID: o.ID, Number: o.Number, SrcPath: o.SrcPath, LinkPath: o.LinkPath,
-			LinkType: o.LinkType, FileSize: o.FileSize, Resolution: o.Resolution,
-			VideoCodec: o.VideoCodec, AudioCodec: o.AudioCodec, Duration: o.Duration,
-			Bitrate: o.Bitrate, Alive: o.Alive,
+	items := make([]LibraryGroupResponse, 0, len(groups))
+	for _, group := range groups {
+		lv := LibraryGroupResponse{
+			Number:  group.Number,
+			Outputs: make([]LibraryOutputResponse, 0, len(group.Outputs)),
 		}
-		meta, ok := metaCache[o.Number]
+		for _, o := range group.Outputs {
+			lv.Outputs = append(lv.Outputs, LibraryOutputResponse{
+				ID: o.ID, SrcPath: o.SrcPath, LinkPath: o.LinkPath,
+				LinkType: o.LinkType, FileSize: o.FileSize, Resolution: o.Resolution,
+				VideoCodec: o.VideoCodec, AudioCodec: o.AudioCodec, Duration: o.Duration,
+				Bitrate: o.Bitrate, Alive: o.Alive,
+			})
+		}
+
+		meta, ok := metaCache[group.Number]
 		if !ok {
-			meta, _ = h.store.GetMetadata(ctx, o.Number)
-			metaCache[o.Number] = meta
+			meta, _ = h.store.GetMetadata(ctx, group.Number)
+			metaCache[group.Number] = meta
 		}
 		if meta != nil {
 			lv.Title = meta.Title
@@ -672,7 +670,7 @@ func (h *Handlers) LibraryRescrapeApply(w http.ResponseWriter, r *http.Request) 
 		Series: res.New.Series, Actors: strings.Join(res.New.Actors, ","),
 		Genres: strings.Join(res.New.Genres, ","), CoverURL: res.New.CoverURL,
 		SampleImages: strings.Join(res.New.SampleImages, ","),
-		Premiered: res.New.Premiered, Year: res.New.Year, Runtime: res.New.Runtime,
+		Premiered:    res.New.Premiered, Year: res.New.Year, Runtime: res.New.Runtime,
 		Rating: res.New.Rating, ReviewCount: res.New.ReviewCount,
 		PageURL: res.New.PageURL, ContentID: res.New.ContentID, Provider: res.New.Provider,
 	})
@@ -694,34 +692,36 @@ func (h *Handlers) UnlinkOutput(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "invalid id")
 		return
 	}
+	output, err := h.store.GetOutputByID(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, 404, "output not found")
+			return
+		}
+		writeError(w, 500, err.Error())
+		return
+	}
 	var req struct {
 		Number string `json:"number"`
 	}
 	_ = readJSON(r, &req)
 	number := strings.ToUpper(strings.TrimSpace(req.Number))
-	// Find the runtime that owns this output to get the executor
-	runtimes := h.registry.All()
-	for _, rt := range runtimes {
-		if err := rt.Executor.Unlink(r.Context(), number, id); err == nil {
-			go rt.Scan(context.Background(), h.store)
-			writeOK(w, map[string]string{"status": "unlinked"})
-			return
-		}
-	}
-	writeError(w, 500, "unlink failed")
-}
-
-func (h *Handlers) DeleteOutput(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil {
-		writeError(w, 400, "invalid id")
+	if number != "" && number != output.Number {
+		writeError(w, 400, "number mismatch")
 		return
 	}
-	if err := h.store.DeleteOutput(r.Context(), id); err != nil {
+
+	rt := h.registry.Get(output.PipelineID)
+	if rt == nil {
+		writeError(w, 404, "pipeline runtime not found")
+		return
+	}
+	if err := rt.Executor.Unlink(r.Context(), output); err != nil {
 		writeError(w, 500, err.Error())
 		return
 	}
-	writeOK(w, map[string]string{"status": "deleted"})
+	go rt.Scan(context.Background(), h.store)
+	writeOK(w, map[string]string{"status": "unlinked"})
 }
 
 // ── Provider Configs ──
@@ -794,4 +794,57 @@ func splitProviders(s string) []string {
 		}
 	}
 	return out
+}
+
+func validateSingleExtensionPaths(paths []string) error {
+	if len(paths) == 0 {
+		return fmt.Errorf("paths required")
+	}
+	extSet := make(map[string]struct{}, len(paths))
+	for _, p := range paths {
+		ext := strings.ToLower(filepath.Ext(p))
+		if ext == "" {
+			return fmt.Errorf("missing extension in selection")
+		}
+		extSet[ext] = struct{}{}
+		if len(extSet) > 1 {
+			return fmt.Errorf("link selection must use one extension")
+		}
+	}
+	return nil
+}
+
+func hasMixedMKVAndMP4Group(items []staging.StagedItem) bool {
+	hasMKV := false
+	hasMP4 := false
+	for _, item := range items {
+		ext := strings.ToLower(filepath.Ext(item.File.Filename))
+		if ext == "" {
+			ext = strings.ToLower(filepath.Ext(item.File.Path))
+		}
+		switch ext {
+		case ".mkv":
+			hasMKV = true
+		case ".mp4":
+			hasMP4 = true
+		}
+		if hasMKV && hasMP4 {
+			return true
+		}
+	}
+	return false
+}
+
+func isGroupLinkEligible(g staging.StagingGroup) bool {
+	if g.Scrape.Status != "success" || g.Task != "" || len(g.Items) == 0 {
+		return false
+	}
+	paths := make([]string, 0, len(g.Items))
+	for _, item := range g.Items {
+		if !item.File.Ready {
+			return false
+		}
+		paths = append(paths, item.File.Path)
+	}
+	return validateSingleExtensionPaths(paths) == nil
 }

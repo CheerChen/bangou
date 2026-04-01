@@ -16,8 +16,10 @@ type Store interface {
 
 	// Outputs
 	CreateOutput(ctx context.Context, o *Output) error
+	GetOutputByID(ctx context.Context, id int64) (*Output, error)
 	DeleteOutput(ctx context.Context, id int64) error
 	ListOutputsByPipeline(ctx context.Context, pipelineID int64, limit, offset int, sort, order string) ([]Output, int, error)
+	ListOutputGroupsByPipeline(ctx context.Context, pipelineID int64, limit, offset int, sort, order string) ([]OutputGroup, int, error)
 	ListAllOutputs(ctx context.Context) ([]Output, error)
 	SetOutputAlive(ctx context.Context, id int64, alive bool) error
 	SetOutputLinkType(ctx context.Context, id int64, linkType string) error
