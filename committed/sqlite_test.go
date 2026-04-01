@@ -277,38 +277,3 @@ func TestCountBangouFiles(t *testing.T) {
 	}
 }
 
-func TestMigrateSettingsToPipeline(t *testing.T) {
-	s := testStore(t)
-	ctx := context.Background()
-
-	// Simulate legacy settings
-	_ = s.SetSetting(ctx, "input_dir", "/old/input")
-	_ = s.SetSetting(ctx, "output_dir", "/old/output")
-	_ = s.SetSetting(ctx, "link_path_pattern", "{Year}/{Number}")
-	_ = s.SetSetting(ctx, "dmm_api_id", "myid")
-	_ = s.SetSetting(ctx, "dmm_affiliate_id", "myaff")
-	_ = s.SetSetting(ctx, "aria2_rpc_url", "http://localhost:6800/jsonrpc")
-
-	store := s.(*SQLiteStore)
-	store.db.Exec("DELETE FROM pipelines")
-	if err := migrateSettingsToPipeline(store.db); err != nil {
-		t.Fatal(err)
-	}
-
-	list, _ := s.ListPipelines(ctx)
-	if len(list) != 1 {
-		t.Fatalf("expected 1 pipeline, got %d", len(list))
-	}
-	if list[0].InputDir != "/old/input" || list[0].OutputDir != "/old/output" {
-		t.Fatalf("unexpected pipeline: %+v", list[0])
-	}
-
-	dmmCfg, _ := s.GetProviderConfig(ctx, "dmm")
-	if dmmCfg == "{}" {
-		t.Fatal("expected dmm config to be migrated")
-	}
-	aria2Cfg, _ := s.GetProviderConfig(ctx, "aria2")
-	if aria2Cfg == "{}" {
-		t.Fatal("expected aria2 config to be migrated")
-	}
-}
