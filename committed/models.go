@@ -21,10 +21,23 @@ type ProviderConfig struct {
 	Config   string // JSON blob
 }
 
-type Output struct {
+// Bangou is the aggregate root — one video number within one pipeline.
+type Bangou struct {
 	ID         int64
 	PipelineID int64
 	Number     string
+	OutDir     string // owned output directory
+	NFOPath    string
+	CoverPath  string
+	RawPath    string
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+}
+
+// BangouFile is a single physical file (hard/symlink) under a Bangou.
+type BangouFile struct {
+	ID         int64
+	BangouID   int64
 	SrcPath    string
 	LinkPath   string
 	LinkType   string
@@ -39,11 +52,6 @@ type Output struct {
 	CheckedAt  time.Time
 }
 
-type OutputGroup struct {
-	Number  string
-	Outputs []Output
-}
-
 type MergedPart struct {
 	Number   string
 	Filename string
@@ -53,8 +61,8 @@ type MergedPart struct {
 
 type Metadata struct {
 	ID           int64
-	PipelineID   int64
-	Number       string
+	BangouID     int64
+	Number       string // denormalized for convenience
 	Title        string
 	Plot         string
 	Director     string

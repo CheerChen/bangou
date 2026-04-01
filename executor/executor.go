@@ -99,7 +99,6 @@ func (e *Executor) Link(ctx context.Context, number string, selectedPaths []stri
 				return fmt.Errorf("archive %s: %w", item.File.Filename, err)
 			}
 			log.Printf("[link] %s: archived %s -> %s", number, item.File.Path, archived)
-			// Update the path so linking uses the archived location
 			selected[i].File.Path = archived
 		}
 	}
@@ -108,6 +107,16 @@ func (e *Executor) Link(ctx context.Context, number string, selectedPaths []stri
 	outDir := filepath.Join(e.outputDir, relPath)
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return fmt.Errorf("mkdir %s: %w", outDir, err)
+	}
+
+	// Create the Bangou aggregate root
+	bangouID, err := e.store.CreateBangou(ctx, &committed.Bangou{
+		PipelineID: opt.PipelineID,
+		Number:     number,
+		OutDir:     outDir,
+	})
+	if err != nil {
+		return fmt.Errorf("create bangou: %w", err)
 	}
 
 	srcDir := filepath.Dir(selected[0].File.Path)
@@ -122,28 +131,27 @@ func (e *Executor) Link(ctx context.Context, number string, selectedPaths []stri
 		if err != nil {
 			return fmt.Errorf("link part %d: %w", part, err)
 		}
-		output := &committed.Output{
-			PipelineID: opt.PipelineID,
-			Number:     number,
-			SrcPath:    item.File.Path,
-			LinkPath:   result.LinkPath,
-			LinkType:   result.LinkType,
-			FileSize:   item.File.Size,
+		bf := &committed.BangouFile{
+			BangouID: bangouID,
+			SrcPath:  item.File.Path,
+			LinkPath: result.LinkPath,
+			LinkType: result.LinkType,
+			FileSize: item.File.Size,
 		}
 		if item.File.Media != nil {
-			output.Resolution = item.File.Media.Resolution()
-			output.VideoCodec = item.File.Media.VideoCodec
-			output.AudioCodec = item.File.Media.AudioCodec
-			output.Duration = item.File.Media.DurationText()
-			output.Bitrate = item.File.Media.BitrateText()
+			bf.Resolution = item.File.Media.Resolution()
+			bf.VideoCodec = item.File.Media.VideoCodec
+			bf.AudioCodec = item.File.Media.AudioCodec
+			bf.Duration = item.File.Media.DurationText()
+			bf.Bitrate = item.File.Media.BitrateText()
 		}
-		if err := e.store.CreateOutput(ctx, output); err != nil {
-			return fmt.Errorf("store output: %w", err)
+		if err := e.store.CreateBangouFile(ctx, bf); err != nil {
+			return fmt.Errorf("store bangou file: %w", err)
 		}
 		log.Printf("[link] %s: part %d %s %s -> %s", number, part, result.LinkType, item.File.Path, result.LinkPath)
 	}
 
-	e.writeMetadata(ctx, number, outDir, group.Scrape.Meta, opt.PipelineID)
+	e.writeMetadata(ctx, bangouID, number, outDir, group.Scrape.Meta)
 	e.staging.RemoveGroup(number)
 	log.Printf("[link] %s: done, %d files linked", number, len(selected))
 	return nil
@@ -190,56 +198,106 @@ func (e *Executor) Merge(ctx context.Context, number string, selectedPaths []str
 	return nil
 }
 
-// Unlink removes exactly one linked output file by its recorded linkPath.
-func (e *Executor) Unlink(ctx context.Context, output *committed.Output) error {
-	if output == nil {
-		return fmt.Errorf("nil output")
+// Unlink removes a linked file. When it's the last file under its Bangou,
+// also removes metadata artifacts (nfo, cover, raw) and the Bangou record.
+func (e *Executor) Unlink(ctx context.Context, file *committed.BangouFile) error {
+	if file == nil {
+		return fmt.Errorf("nil bangou file")
 	}
-	number := strings.ToUpper(strings.TrimSpace(output.Number))
-	log.Printf("[unlink] %s: start", number)
 
-	linkPath := strings.TrimSpace(output.LinkPath)
+	bangou, err := e.store.GetBangou(ctx, file.BangouID)
+	if err != nil {
+		return fmt.Errorf("get bangou: %w", err)
+	}
+	if bangou == nil {
+		return fmt.Errorf("bangou %d not found", file.BangouID)
+	}
+	log.Printf("[unlink] %s: start (file %d)", bangou.Number, file.ID)
+
+	// 1. Remove the link file
+	linkPath := strings.TrimSpace(file.LinkPath)
 	if linkPath == "" {
 		return fmt.Errorf("empty link path")
 	}
-	if err := os.Remove(linkPath); err != nil {
-		if os.IsNotExist(err) {
-			return fmt.Errorf("link file not found: %s", linkPath)
-		}
+	if err := os.Remove(linkPath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove link file: %w", err)
 	}
-	log.Printf("[unlink] %s: removed %s", number, filepath.Base(linkPath))
+	log.Printf("[unlink] %s: removed %s", bangou.Number, filepath.Base(linkPath))
 
-	if err := e.store.DeleteOutput(ctx, output.ID); err != nil {
-		return fmt.Errorf("delete output: %w", err)
+	// 2. Delete the file record
+	if err := e.store.DeleteBangouFile(ctx, file.ID); err != nil {
+		return fmt.Errorf("delete bangou file: %w", err)
 	}
-	log.Printf("[unlink] %s: done", number)
+
+	// 3. If this was the last file, clean up the entire Bangou
+	remaining, err := e.store.CountBangouFiles(ctx, bangou.ID)
+	if err != nil {
+		return fmt.Errorf("count remaining files: %w", err)
+	}
+	if remaining == 0 {
+		log.Printf("[unlink] %s: last file removed, cleaning up bangou", bangou.Number)
+		e.cleanupBangouArtifacts(bangou)
+		if err := e.store.DeleteBangou(ctx, bangou.ID); err != nil {
+			return fmt.Errorf("delete bangou: %w", err)
+		}
+	}
+
+	log.Printf("[unlink] %s: done", bangou.Number)
 	return nil
 }
 
-func (e *Executor) writeMetadata(ctx context.Context, number, outDir string, meta *provider.MovieMetadata, pipelineID int64) {
+// cleanupBangouArtifacts removes nfo, cover, raw files tracked by the Bangou.
+func (e *Executor) cleanupBangouArtifacts(b *committed.Bangou) {
+	for _, path := range []string{b.NFOPath, b.CoverPath, b.RawPath} {
+		if path == "" {
+			continue
+		}
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			log.Printf("[unlink] %s: warn: remove %s: %v", b.Number, filepath.Base(path), err)
+		} else if err == nil {
+			log.Printf("[unlink] %s: removed %s", b.Number, filepath.Base(path))
+		}
+	}
+	// Try to remove the output directory if empty
+	if b.OutDir != "" {
+		_ = os.Remove(b.OutDir) // only succeeds if empty
+	}
+}
+
+func (e *Executor) writeMetadata(ctx context.Context, bangouID int64, number, outDir string, meta *provider.MovieMetadata) {
 	if meta == nil {
 		return
 	}
-	nfoPath := filepath.Join(outDir, number+".nfo")
+
+	var nfoPath, coverPath, rawPath string
+
+	nfoPath = filepath.Join(outDir, number+".nfo")
 	if err := nfo.Save(meta, nfoPath); err != nil {
 		log.Printf("warn: write nfo %s: %v", number, err)
+		nfoPath = ""
 	}
-	_ = provider.DownloadCover(ctx, meta.CoverURL, outDir, number)
+
+	coverPath = provider.DownloadCover(ctx, meta.CoverURL, outDir, number)
 
 	if len(meta.RawJSON) > 0 {
-		rawPath := filepath.Join(outDir, number+"-raw."+meta.Provider)
+		rawPath = filepath.Join(outDir, number+"-raw."+meta.Provider)
 		if err := os.WriteFile(rawPath, meta.RawJSON, 0o644); err != nil {
 			log.Printf("warn: write raw %s: %v", number, err)
+			rawPath = ""
 		}
 	}
 
-	e.commitMetadata(ctx, number, meta, pipelineID)
+	// Record artifact paths on Bangou
+	if err := e.store.UpdateBangouPaths(ctx, bangouID, nfoPath, coverPath, rawPath); err != nil {
+		log.Printf("warn: update bangou paths %s: %v", number, err)
+	}
+
+	e.commitMetadata(ctx, bangouID, number, meta)
 }
 
-func (e *Executor) commitMetadata(ctx context.Context, number string, meta *provider.MovieMetadata, pipelineID int64) {
+func (e *Executor) commitMetadata(ctx context.Context, bangouID int64, number string, meta *provider.MovieMetadata) {
 	_ = e.store.UpsertMetadata(ctx, &committed.Metadata{
-		PipelineID:   pipelineID,
+		BangouID:     bangouID,
 		Number:       number,
 		Title:        meta.Title,
 		Plot:         meta.Plot,

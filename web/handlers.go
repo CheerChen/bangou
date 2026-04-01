@@ -82,7 +82,7 @@ func (h *Handlers) ListPipelines(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]PipelineResponse, 0, len(pipes))
 	for _, p := range pipes {
-		_, libCount, _ := h.store.ListOutputGroupsByPipeline(ctx, p.ID, 0, 0, "", "")
+		_, libCount, _ := h.store.ListBangousByPipeline(ctx, p.ID, 0, 0, "", "")
 		pending := 0
 		if rt := h.registry.Get(p.ID); rt != nil {
 			pending = len(rt.Manager.ListGroups()) + len(rt.Manager.ListUnknowns())
@@ -148,13 +148,13 @@ func (h *Handlers) DeletePipeline(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "invalid id")
 		return
 	}
-	_, total, err := h.store.ListOutputsByPipeline(r.Context(), id, 0, 0, "", "")
+	_, total, err := h.store.ListBangousByPipeline(r.Context(), id, 0, 0, "", "")
 	if err != nil {
 		writeError(w, 500, err.Error())
 		return
 	}
 	if total > 0 {
-		writeError(w, 409, "pipeline has linked outputs; unlink first")
+		writeError(w, 409, "pipeline has linked bangous; unlink first")
 		return
 	}
 	h.registry.StopPipeline(id)
@@ -516,7 +516,7 @@ func (h *Handlers) LinkAllProgress(w http.ResponseWriter, r *http.Request) {
 
 // ── Library ──
 
-type LibraryOutputResponse struct {
+type LibraryFileResponse struct {
 	ID         int64  `json:"id"`
 	SrcPath    string `json:"srcPath"`
 	LinkPath   string `json:"linkPath"`
@@ -530,29 +530,29 @@ type LibraryOutputResponse struct {
 	Alive      bool   `json:"alive"`
 }
 
-type LibraryGroupResponse struct {
-	Number       string                  `json:"number"`
-	Outputs      []LibraryOutputResponse `json:"outputs"`
-	Title        string                  `json:"title,omitempty"`
-	Actors       string                  `json:"actors,omitempty"`
-	Genres       []string                `json:"genres,omitempty"`
-	CoverURL     string                  `json:"coverURL,omitempty"`
-	SampleImages []string                `json:"sampleImages,omitempty"`
-	Rating       string                  `json:"rating,omitempty"`
-	ReviewCount  int                     `json:"reviewCount"`
-	PageURL      string                  `json:"pageURL,omitempty"`
-	Maker        string                  `json:"maker,omitempty"`
-	Premiered    string                  `json:"premiered,omitempty"`
-	Year         string                  `json:"year,omitempty"`
-	Runtime      string                  `json:"runtime,omitempty"`
-	Provider     string                  `json:"provider,omitempty"`
+type LibraryBangouResponse struct {
+	Number       string                `json:"number"`
+	Files        []LibraryFileResponse `json:"outputs"` // JSON key kept as "outputs" for frontend compat
+	Title        string                `json:"title,omitempty"`
+	Actors       string                `json:"actors,omitempty"`
+	Genres       []string              `json:"genres,omitempty"`
+	CoverURL     string                `json:"coverURL,omitempty"`
+	SampleImages []string              `json:"sampleImages,omitempty"`
+	Rating       string                `json:"rating,omitempty"`
+	ReviewCount  int                   `json:"reviewCount"`
+	PageURL      string                `json:"pageURL,omitempty"`
+	Maker        string                `json:"maker,omitempty"`
+	Premiered    string                `json:"premiered,omitempty"`
+	Year         string                `json:"year,omitempty"`
+	Runtime      string                `json:"runtime,omitempty"`
+	Provider     string                `json:"provider,omitempty"`
 }
 
 type LibraryPageResponse struct {
-	Items []LibraryGroupResponse `json:"items"`
-	Total int                    `json:"total"`
-	Page  int                    `json:"page"`
-	Size  int                    `json:"size"`
+	Items []LibraryBangouResponse `json:"items"`
+	Total int                     `json:"total"`
+	Page  int                     `json:"page"`
+	Size  int                     `json:"size"`
 }
 
 func (h *Handlers) ListLibrary(w http.ResponseWriter, r *http.Request) {
@@ -573,34 +573,28 @@ func (h *Handlers) ListLibrary(w http.ResponseWriter, r *http.Request) {
 
 	sort := r.URL.Query().Get("sort")   // "added", "number", "year", "rating"
 	order := r.URL.Query().Get("order") // "asc", "desc"
-	groups, total, err := h.store.ListOutputGroupsByPipeline(ctx, id, size, page*size, sort, order)
+	bangous, total, err := h.store.ListBangousByPipeline(ctx, id, size, page*size, sort, order)
 	if err != nil {
 		writeError(w, 500, err.Error())
 		return
 	}
 
-	metaCache := map[string]*committed.Metadata{}
-	items := make([]LibraryGroupResponse, 0, len(groups))
-	for _, group := range groups {
-		lv := LibraryGroupResponse{
-			Number:  group.Number,
-			Outputs: make([]LibraryOutputResponse, 0, len(group.Outputs)),
-		}
-		for _, o := range group.Outputs {
-			lv.Outputs = append(lv.Outputs, LibraryOutputResponse{
-				ID: o.ID, SrcPath: o.SrcPath, LinkPath: o.LinkPath,
-				LinkType: o.LinkType, FileSize: o.FileSize, Resolution: o.Resolution,
-				VideoCodec: o.VideoCodec, AudioCodec: o.AudioCodec, Duration: o.Duration,
-				Bitrate: o.Bitrate, Alive: o.Alive,
+	items := make([]LibraryBangouResponse, 0, len(bangous))
+	for _, b := range bangous {
+		lv := LibraryBangouResponse{Number: b.Number}
+
+		files, _ := h.store.ListBangouFilesByBangou(ctx, b.ID)
+		lv.Files = make([]LibraryFileResponse, 0, len(files))
+		for _, f := range files {
+			lv.Files = append(lv.Files, LibraryFileResponse{
+				ID: f.ID, SrcPath: f.SrcPath, LinkPath: f.LinkPath,
+				LinkType: f.LinkType, FileSize: f.FileSize, Resolution: f.Resolution,
+				VideoCodec: f.VideoCodec, AudioCodec: f.AudioCodec, Duration: f.Duration,
+				Bitrate: f.Bitrate, Alive: f.Alive,
 			})
 		}
 
-		meta, ok := metaCache[group.Number]
-		if !ok {
-			meta, _ = h.store.GetMetadata(ctx, group.Number)
-			metaCache[group.Number] = meta
-		}
-		if meta != nil {
+		if meta, _ := h.store.GetMetadataByBangou(ctx, b.ID); meta != nil {
 			lv.Title = meta.Title
 			lv.Actors = meta.Actors
 			lv.CoverURL = meta.CoverURL
@@ -643,7 +637,11 @@ func (h *Handlers) LibraryRescrape(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		meta, errs := rt.LibScrapeFn(context.Background(), h.store, number)
 		if meta != nil {
-			old, _ := h.store.GetMetadata(context.Background(), number)
+			// Find old metadata from the first matching bangou
+			var old *committed.Metadata
+			if b, _ := h.store.GetBangouByPipelineAndNumber(context.Background(), rt.Pipeline.ID, number); b != nil {
+				old, _ = h.store.GetMetadataByBangou(context.Background(), b.ID)
+			}
 			h.libRescrape.Store(number, &LibRescrapeResult{Status: "done", Old: old, New: meta, Errors: errs})
 		} else {
 			h.libRescrape.Store(number, &LibRescrapeResult{Status: "failed", Errors: errs})
@@ -664,16 +662,24 @@ func (h *Handlers) LibraryRescrapeApply(w http.ResponseWriter, r *http.Request) 
 		writeError(w, 400, "rescrape not ready")
 		return
 	}
-	_ = h.store.UpsertMetadata(r.Context(), &committed.Metadata{
-		Number: number, Title: res.New.Title, Plot: res.New.Plot,
-		Director: res.New.Director, Maker: res.New.Maker, Label: res.New.Label,
-		Series: res.New.Series, Actors: strings.Join(res.New.Actors, ","),
-		Genres: strings.Join(res.New.Genres, ","), CoverURL: res.New.CoverURL,
-		SampleImages: strings.Join(res.New.SampleImages, ","),
-		Premiered:    res.New.Premiered, Year: res.New.Year, Runtime: res.New.Runtime,
-		Rating: res.New.Rating, ReviewCount: res.New.ReviewCount,
-		PageURL: res.New.PageURL, ContentID: res.New.ContentID, Provider: res.New.Provider,
-	})
+	// Apply to all bangous matching this number across pipelines
+	for _, rt := range h.registry.All() {
+		b, _ := h.store.GetBangouByPipelineAndNumber(r.Context(), rt.Pipeline.ID, number)
+		if b == nil {
+			continue
+		}
+		_ = h.store.UpsertMetadata(r.Context(), &committed.Metadata{
+			BangouID: b.ID,
+			Number:   number, Title: res.New.Title, Plot: res.New.Plot,
+			Director: res.New.Director, Maker: res.New.Maker, Label: res.New.Label,
+			Series: res.New.Series, Actors: strings.Join(res.New.Actors, ","),
+			Genres: strings.Join(res.New.Genres, ","), CoverURL: res.New.CoverURL,
+			SampleImages: strings.Join(res.New.SampleImages, ","),
+			Premiered:    res.New.Premiered, Year: res.New.Year, Runtime: res.New.Runtime,
+			Rating: res.New.Rating, ReviewCount: res.New.ReviewCount,
+			PageURL: res.New.PageURL, ContentID: res.New.ContentID, Provider: res.New.Provider,
+		})
+	}
 	h.libRescrape.Delete(number)
 	writeOK(w, map[string]string{"status": "applied"})
 }
@@ -692,31 +698,37 @@ func (h *Handlers) UnlinkOutput(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "invalid id")
 		return
 	}
-	output, err := h.store.GetOutputByID(r.Context(), id)
+	file, err := h.store.GetBangouFileByID(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			writeError(w, 404, "output not found")
+			writeError(w, 404, "file not found")
 			return
 		}
 		writeError(w, 500, err.Error())
 		return
 	}
+	bangou, err := h.store.GetBangou(r.Context(), file.BangouID)
+	if err != nil || bangou == nil {
+		writeError(w, 404, "bangou not found")
+		return
+	}
+
 	var req struct {
 		Number string `json:"number"`
 	}
 	_ = readJSON(r, &req)
 	number := strings.ToUpper(strings.TrimSpace(req.Number))
-	if number != "" && number != output.Number {
+	if number != "" && number != bangou.Number {
 		writeError(w, 400, "number mismatch")
 		return
 	}
 
-	rt := h.registry.Get(output.PipelineID)
+	rt := h.registry.Get(bangou.PipelineID)
 	if rt == nil {
 		writeError(w, 404, "pipeline runtime not found")
 		return
 	}
-	if err := rt.Executor.Unlink(r.Context(), output); err != nil {
+	if err := rt.Executor.Unlink(r.Context(), file); err != nil {
 		writeError(w, 500, err.Error())
 		return
 	}

@@ -68,3 +68,67 @@ CREATE TABLE IF NOT EXISTS provider_configs (
     config   TEXT NOT NULL DEFAULT '{}'
 );
 `
+
+// schemaV3Tables creates bangous + bangou_files (run before migration).
+const schemaV3Tables = `
+CREATE TABLE IF NOT EXISTS bangous (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    pipeline_id INTEGER NOT NULL REFERENCES pipelines(id),
+    number      TEXT NOT NULL,
+    out_dir     TEXT NOT NULL,
+    nfo_path    TEXT NOT NULL DEFAULT '',
+    cover_path  TEXT NOT NULL DEFAULT '',
+    raw_path    TEXT NOT NULL DEFAULT '',
+    created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(pipeline_id, number)
+);
+
+CREATE TABLE IF NOT EXISTS bangou_files (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    bangou_id   INTEGER NOT NULL REFERENCES bangous(id),
+    src_path    TEXT NOT NULL DEFAULT '',
+    link_path   TEXT NOT NULL,
+    link_type   TEXT NOT NULL DEFAULT 'hardlink',
+    file_size   INTEGER NOT NULL DEFAULT 0,
+    resolution  TEXT NOT NULL DEFAULT '',
+    video_codec TEXT NOT NULL DEFAULT '',
+    audio_codec TEXT NOT NULL DEFAULT '',
+    duration    TEXT NOT NULL DEFAULT '',
+    bitrate     TEXT NOT NULL DEFAULT '',
+    alive       BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    checked_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_bangou_files_bangou ON bangou_files(bangou_id);
+`
+
+// schemaV3Metadata creates the new metadata table with bangou_id FK.
+// Must run AFTER migration drops the old metadata table.
+const schemaV3Metadata = `
+CREATE TABLE IF NOT EXISTS metadata (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    bangou_id    INTEGER NOT NULL UNIQUE REFERENCES bangous(id),
+    number       TEXT NOT NULL DEFAULT '',
+    title        TEXT NOT NULL DEFAULT '',
+    plot         TEXT NOT NULL DEFAULT '',
+    director     TEXT NOT NULL DEFAULT '',
+    maker        TEXT NOT NULL DEFAULT '',
+    label        TEXT NOT NULL DEFAULT '',
+    series       TEXT NOT NULL DEFAULT '',
+    actors       TEXT NOT NULL DEFAULT '',
+    genres       TEXT NOT NULL DEFAULT '',
+    cover_url    TEXT NOT NULL DEFAULT '',
+    sample_images TEXT NOT NULL DEFAULT '',
+    premiered    TEXT NOT NULL DEFAULT '',
+    year         TEXT NOT NULL DEFAULT '',
+    runtime      TEXT NOT NULL DEFAULT '',
+    rating       TEXT NOT NULL DEFAULT '',
+    review_count INTEGER NOT NULL DEFAULT 0,
+    page_url     TEXT NOT NULL DEFAULT '',
+    content_id   TEXT NOT NULL DEFAULT '',
+    provider     TEXT NOT NULL DEFAULT '',
+    created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+`
