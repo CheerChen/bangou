@@ -10,7 +10,7 @@ export default function App() {
         <nav className="border-b border-gray-800 px-6 py-3">
           <Link to="/" className="text-lg font-semibold text-white tracking-tight hover:text-indigo-400 transition">bangou</Link>
         </nav>
-        <main className="max-w-6xl mx-auto px-4 py-6">
+        <main className="max-w-screen-2xl mx-auto px-6 py-6">
           <Routes>
             <Route path="/" element={<Home />} />
             <Route path="/pipelines/:id" element={<PipelineDetail />} />

@@ -78,3 +78,27 @@ func TestBuildMergeCommand(t *testing.T) {
 		t.Fatalf("unexpected args: %v", cmd.Args)
 	}
 }
+
+func TestMergeProgressFromSize(t *testing.T) {
+	tests := []struct {
+		name        string
+		currentSize int64
+		totalSize   int64
+		want        int
+	}{
+		{name: "zero total", currentSize: 50, totalSize: 0, want: 0},
+		{name: "zero current", currentSize: 0, totalSize: 100, want: 0},
+		{name: "half", currentSize: 50, totalSize: 100, want: 50},
+		{name: "full still capped", currentSize: 100, totalSize: 100, want: 99},
+		{name: "overflow capped", currentSize: 120, totalSize: 100, want: 99},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := mergeProgressFromSize(tc.currentSize, tc.totalSize)
+			if got != tc.want {
+				t.Fatalf("mergeProgressFromSize(%d, %d) = %d, want %d", tc.currentSize, tc.totalSize, got, tc.want)
+			}
+		})
+	}
+}

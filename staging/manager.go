@@ -1,6 +1,7 @@
 package staging
 
 import (
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -271,8 +272,29 @@ func (m *Manager) SetTaskProgress(number string, percent int) {
 	}
 }
 
-// SetDownloadProgress updates download progress for a file matched by filename.
-func (m *Manager) SetDownloadProgress(filename string, pct int, completed int64, status string) {
+// ResolveDownload returns the canonical staged filename for a download path if it
+// can be matched uniquely. Matching prefers exact filename/path and falls back to
+// parsed number+part identity among not-ready files.
+func (m *Manager) ResolveDownload(downloadPath string) string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.resolveDownloadLocked(downloadPath)
+}
+
+// SetDownloadProgress applies progress to the uniquely matched staged file.
+// Returns the canonical staged filename that was updated, or empty string.
+func (m *Manager) SetDownloadProgress(downloadPath string, pct int, completed int64, status string) string {
+	filename := m.ResolveDownload(downloadPath)
+	if filename == "" {
+		return ""
+	}
+	if !m.setDownloadProgressByFilename(filename, pct, completed, status) {
+		return ""
+	}
+	return filename
+}
+
+func (m *Manager) setDownloadProgressByFilename(filename string, pct int, completed int64, status string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -281,7 +303,7 @@ func (m *Manager) SetDownloadProgress(filename string, pct int, completed int64,
 			u.DownloadPct = pct
 			u.DownloadSize = completed
 			u.DownloadStatus = status
-			return
+			return true
 		}
 	}
 	for _, g := range m.groups {
@@ -290,10 +312,11 @@ func (m *Manager) SetDownloadProgress(filename string, pct int, completed int64,
 				g.Items[i].File.DownloadPct = pct
 				g.Items[i].File.DownloadSize = completed
 				g.Items[i].File.DownloadStatus = status
-				return
+				return true
 			}
 		}
 	}
+	return false
 }
 
 // ClearDownloadProgress resets download info for files not in the given filename set.
@@ -318,6 +341,79 @@ func (m *Manager) ClearDownloadProgress(activeFilenames map[string]bool) {
 			}
 		}
 	}
+}
+
+func (m *Manager) resolveDownloadLocked(downloadPath string) string {
+	filename := filepath.Base(downloadPath)
+	cleanPath := filepath.Clean(downloadPath)
+	parsed := parser.Parse(filename)
+
+	strongMatches := map[string]struct{}{}
+	identityMatches := map[string]struct{}{}
+
+	for _, u := range m.unknowns {
+		if u.Ready {
+			continue
+		}
+		if isStrongDownloadMatch(u.StagingFile, filename, cleanPath) {
+			strongMatches[u.Filename] = struct{}{}
+		}
+	}
+	for _, g := range m.groups {
+		for _, item := range g.Items {
+			if item.File.Ready {
+				continue
+			}
+			if isStrongDownloadMatch(item.File, filename, cleanPath) {
+				strongMatches[item.File.Filename] = struct{}{}
+				continue
+			}
+			if matchesParsedDownloadIdentity(item, parsed.Number, parsed.Part) {
+				identityMatches[item.File.Filename] = struct{}{}
+			}
+		}
+	}
+
+	if filename, ok := singleMatch(strongMatches); ok {
+		return filename
+	}
+	if filename, ok := singleMatch(identityMatches); ok {
+		return filename
+	}
+	return ""
+}
+
+func matchesParsedDownloadIdentity(item StagedItem, number string, part int) bool {
+	if number == "" || item.Parsed.Number != number {
+		return false
+	}
+	if part > 0 {
+		return item.Parsed.Part == part
+	}
+	return true
+}
+
+func isStrongDownloadMatch(f StagingFile, filename, cleanPath string) bool {
+	return f.Filename == filename ||
+		filepath.Clean(f.Path) == cleanPath ||
+		stripSitePrefix(f.Filename) == filename
+}
+
+func stripSitePrefix(filename string) string {
+	if idx := strings.Index(filename, "@"); idx >= 0 && idx < len(filename)-1 {
+		return filename[idx+1:]
+	}
+	return filename
+}
+
+func singleMatch(matches map[string]struct{}) (string, bool) {
+	if len(matches) != 1 {
+		return "", false
+	}
+	for filename := range matches {
+		return filename, true
+	}
+	return "", false
 }
 
 func (m *Manager) SetIgnored(number string, ignored bool) {

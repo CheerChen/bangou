@@ -24,7 +24,7 @@ var (
 
 	heyzoRe    = regexp.MustCompile(`(?i)^(heyzo)(\d{4})(?:\D|$)`)
 	mgstageRe  = regexp.MustCompile(`(?i)^(\d{3,4}[a-zA-Z]{2,6})(\d{3,6})(?:\D|$)`)
-	standardRe = regexp.MustCompile(`(?i)^\d*([a-zA-Z]{2,5})(\d{3,6})(?:\D|$)`)
+	standardRe = regexp.MustCompile(`(?i)^\d*([a-zA-Z]{2,6})(\d{3,6})(?:\D|$)`)
 )
 
 func Parse(filename string) ParsedFile {

@@ -35,3 +35,29 @@ func TestDMMToMetadata(t *testing.T) {
 		t.Fatalf("unexpected meta: %+v", m)
 	}
 }
+
+func TestSelectDMMItemFiltersMismatchedContentID(t *testing.T) {
+	items := []dmmItem{
+		{ContentID: "ovvr558", ProductID: "ovvr558", Title: "Wrong DVD result"},
+		{ContentID: "mdvr00242", ProductID: "mdvr00242", Title: "Correct monthly result"},
+		{ContentID: "mdvr00242", ProductID: "mdvr00242", Title: "Correct digital result"},
+	}
+
+	item := selectDMMItem("mdvr00242", items)
+	if item == nil {
+		t.Fatal("expected a matched item")
+	}
+	if item.ContentID != "mdvr00242" {
+		t.Fatalf("expected content_id mdvr00242, got %s", item.ContentID)
+	}
+	if item.Title != "Correct monthly result" {
+		t.Fatalf("expected to keep first matched item, got %q", item.Title)
+	}
+}
+
+func TestDMMItemMatchesKeywordWithPrefixedContentID(t *testing.T) {
+	item := &dmmItem{ContentID: "h_1711tnvr00001", ProductID: "h_1711tnvr00001"}
+	if !dmmItemMatches(buildDMMMatchKeys("TNVR-001"), item) {
+		t.Fatal("expected prefixed content_id to match normalized keyword")
+	}
+}
