@@ -7,6 +7,7 @@ export interface LightboxItem {
   width?: number
   height?: number
   msrc?: string
+  type?: 'image' | 'video'
 }
 
 type LightboxSource = string | LightboxItem
@@ -24,9 +25,12 @@ interface ImageSize {
   height: number
 }
 
-interface NormalizedLightboxItem extends LightboxItem {
+interface NormalizedLightboxItem {
+  src: string
+  type: 'image' | 'video'
   width: number
   height: number
+  msrc?: string
 }
 
 function getThumbSize(thumbEl?: HTMLElement): ImageSize | null {
@@ -39,21 +43,22 @@ function getThumbSize(thumbEl?: HTMLElement): ImageSize | null {
   return { width: thumbEl.naturalWidth, height: thumbEl.naturalHeight }
 }
 
-function normalizeItems(images: LightboxSource[], sizeCache: Map<string, ImageSize>) {
-  return images
-    .map((image) => {
-      const item = typeof image === 'string' ? { src: image } : image
-      if (!item.src) {
-        return null
-      }
-      const cached = sizeCache.get(item.src)
-      return {
-        ...item,
-        width: item.width || cached?.width || 1,
-        height: item.height || cached?.height || 1,
-      }
+function normalizeItems(images: LightboxSource[], sizeCache: Map<string, ImageSize>): NormalizedLightboxItem[] {
+  const out: NormalizedLightboxItem[] = []
+  for (const image of images) {
+    const item = typeof image === 'string' ? { src: image } : image
+    if (!item.src) continue
+    const isVideo = item.type === 'video'
+    const cached = sizeCache.get(item.src)
+    out.push({
+      src: item.src,
+      type: isVideo ? 'video' : 'image',
+      width: item.width || cached?.width || (isVideo ? 720 : 1),
+      height: item.height || cached?.height || (isVideo ? 480 : 1),
+      msrc: item.msrc,
     })
-    .filter((item): item is NormalizedLightboxItem => Boolean(item))
+  }
+  return out
 }
 
 export function LightboxProvider({ children }: { children: React.ReactNode }) {
@@ -109,7 +114,7 @@ export function LightboxProvider({ children }: { children: React.ReactNode }) {
 
     const thumbSize = getThumbSize(thumbEl)
     const currentItem = dataSource[index]
-    if (thumbSize && currentItem && (currentItem.width <= 1 || currentItem.height <= 1)) {
+    if (thumbSize && currentItem && currentItem.type !== 'video' && (currentItem.width <= 1 || currentItem.height <= 1)) {
       currentItem.width = thumbSize.width
       currentItem.height = thumbSize.height
       sizeCacheRef.current.set(currentItem.src, thumbSize)
@@ -119,7 +124,7 @@ export function LightboxProvider({ children }: { children: React.ReactNode }) {
     }
 
     const lightbox = new PhotoSwipeLightbox({
-      dataSource,
+      dataSource: dataSource as any,
       index,
       pswpModule: () => import('photoswipe'),
       bgOpacity: 0.9,
@@ -130,6 +135,59 @@ export function LightboxProvider({ children }: { children: React.ReactNode }) {
     if (thumbEl) {
       lightbox.addFilter('thumbEl', () => thumbEl, 0)
     }
+
+    // Video content type support
+    lightbox.addFilter('isContentLoading', (isLoading, content) => {
+      if ((content.data as any).type === 'video') {
+        return false
+      }
+      return isLoading
+    })
+
+    lightbox.addFilter('useContentPlaceholder', (usePlaceholder, content) => {
+      if ((content.data as any).type === 'video') {
+        return false
+      }
+      return usePlaceholder
+    })
+
+    lightbox.on('contentLoad', (e: any) => {
+      const { content } = e
+      if (content.data.type !== 'video') return
+
+      e.preventDefault()
+
+      const container = document.createElement('div')
+      container.style.cssText = 'display:flex;align-items:center;justify-content:center;width:100%;height:100%;'
+
+      const iframe = document.createElement('iframe')
+      iframe.src = content.data.src
+      iframe.style.cssText = 'width:720px;height:480px;max-width:100%;max-height:100%;border:none;border-radius:8px;'
+      iframe.setAttribute('allowfullscreen', '')
+      iframe.setAttribute('allow', 'autoplay')
+
+      container.appendChild(iframe)
+      content.element = container
+    })
+
+    lightbox.on('contentActivate', (e: any) => {
+      if (e.content.data.type === 'video') {
+        const iframe = e.content.element?.querySelector('iframe')
+        if (iframe) {
+          // Reload to trigger autoplay
+          iframe.src = iframe.src
+        }
+      }
+    })
+
+    lightbox.on('contentDeactivate', (e: any) => {
+      if (e.content.data.type === 'video') {
+        const iframe = e.content.element?.querySelector('iframe')
+        if (iframe) {
+          iframe.src = '' // Stop playback
+        }
+      }
+    })
 
     const syncSlideSize = (targetIndex: number) => {
       const pswp = (lightbox as any).pswp
@@ -157,7 +215,7 @@ export function LightboxProvider({ children }: { children: React.ReactNode }) {
     const ensureNearbySizes = (targetIndex: number) => {
       ;[targetIndex - 1, targetIndex, targetIndex + 1].forEach((candidateIndex) => {
         const item = dataSource[candidateIndex]
-        if (!item || (item.width > 1 && item.height > 1)) {
+        if (!item || item.type === 'video' || (item.width > 1 && item.height > 1)) {
           return
         }
         void probeImageSize(item.src)

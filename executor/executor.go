@@ -313,8 +313,9 @@ func (e *Executor) commitMetadata(ctx context.Context, bangouID int64, number st
 		Year:         meta.Year,
 		Runtime:      meta.Runtime,
 		Rating:       meta.Rating,
-		ReviewCount:  meta.ReviewCount,
-		PageURL:      meta.PageURL,
+		ReviewCount:    meta.ReviewCount,
+		SampleMovieURL: meta.SampleMovieURL,
+		PageURL:        meta.PageURL,
 		ContentID:    meta.ContentID,
 		Provider:     meta.Provider,
 	})

@@ -1,10 +1,10 @@
 import { useRef, useState } from 'react'
-import { ExternalLink, RefreshCw, Unlink, CheckCircle, AlertCircle, Layers, FileVideo, Link2, Film, Loader2 } from 'lucide-react'
-import type { LucideIcon } from 'lucide-react'
+import { ExternalLink, RefreshCw, Unlink, CheckCircle, AlertCircle, Layers, FileVideo, Link as LinkIcon, FileText, Image, Loader2, ChevronRight, Calendar, Users, Play } from 'lucide-react'
 import * as api from '../api/client'
-import type { BangouResponse } from '../api/client'
+import type { BangouResponse, BangouFileResponse } from '../api/client'
 import { useLightbox, type LightboxItem } from './Lightbox'
 import Modal from './Modal'
+import TagList from './TagList'
 
 interface Props {
   item: BangouResponse
@@ -20,7 +20,6 @@ export default function LibraryCard({ item, onAction }: Props) {
   const [error, setError] = useState<string | null>(null)
   const outputs = item.outputs || []
   const allAlive = outputs.length > 0 && outputs.every((o) => o.alive)
-  const unlinkTargets = buildUnlinkTargets(item, outputs)
 
   const handleRescrape = async () => {
     setRescraping(true)
@@ -42,17 +41,28 @@ export default function LibraryCard({ item, onAction }: Props) {
     } catch (e: any) { setError(e.message) }
     setUnlinking(false)
   }
-  const galleryItems: LightboxItem[] = item.coverURL
-    ? [
-        {
-          src: item.coverURL,
-          width: imgRef.current?.naturalWidth || undefined,
-          height: imgRef.current?.naturalHeight || undefined,
-          msrc: imgRef.current?.currentSrc || undefined,
-        },
-        ...(item.sampleImages || []).filter(Boolean).map((src) => ({ src })),
-      ]
-    : []
+  const hasVideo = !!item.sampleMovieURL
+  const galleryItems: LightboxItem[] = []
+  if (item.sampleMovieURL) {
+    galleryItems.push({ src: item.sampleMovieURL, type: 'video', width: 720, height: 480 })
+  }
+  if (item.coverURL) {
+    galleryItems.push({
+      src: item.coverURL,
+      width: imgRef.current?.naturalWidth || undefined,
+      height: imgRef.current?.naturalHeight || undefined,
+      msrc: imgRef.current?.currentSrc || undefined,
+    })
+  }
+  if (item.sampleImages) {
+    for (const src of item.sampleImages) {
+      if (src) galleryItems.push({ src })
+    }
+  }
+
+  const multiPart = outputs.length > 1
+  const totalSize = outputs.reduce((sum, o) => sum + (o.fileSize || 0), 0)
+  const unlinkTargets = buildUnlinkTargets(item, outputs)
 
   return (
     <div className="bg-[#1a1a1a] border border-gray-800 rounded-xl overflow-hidden hover:border-gray-700 transition flex flex-col">
@@ -69,8 +79,15 @@ export default function LibraryCard({ item, onAction }: Props) {
               <ExternalLink size={14} />
             </a>
           )}
+          {hasVideo && (
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <div className="w-12 h-12 rounded-full bg-black/60 flex items-center justify-center group-hover/cover:bg-black/80 transition">
+                <Play size={20} className="text-white ml-0.5" fill="currentColor" />
+              </div>
+            </div>
+          )}
           {(() => {
-            const count = 1 + (item.sampleImages?.length || 0); return count > 1 ? (
+            const count = (item.coverURL ? 1 : 0) + (item.sampleImages?.length || 0); return count > 1 ? (
               <span className="absolute top-2 left-2 flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-amber-500/80 text-xs font-bold text-white">
                 <Layers size={11} />{count}
               </span>
@@ -90,44 +107,69 @@ export default function LibraryCard({ item, onAction }: Props) {
       <div className="p-4 space-y-3 flex-1 flex flex-col">
         {item.title && <div className="text-sm text-gray-300 line-clamp-2">{item.title}</div>}
         <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
-          {item.maker && <><dt className="text-gray-600">Info</dt><dd className="text-gray-400">{item.maker} / {item.premiered || item.year} / {item.runtime}min</dd></>}
-          {item.actors && <><dt className="text-gray-600">Actors</dt><dd className="text-gray-400">{item.actors}</dd></>}
+          {(item.premiered || item.year || item.runtime) && <><dt className="text-gray-600"><Calendar size={11} /></dt><dd className="text-gray-400">{[item.premiered || item.year, item.runtime && `${item.runtime}min`].filter(Boolean).join(' / ')}</dd></>}
+          {item.actors && <><dt className="text-gray-600"><Users size={11} /></dt><dd className="text-gray-400">{item.actors}</dd></>}
         </dl>
-        {item.genres && item.genres.length > 0 && (
-          <div className="flex flex-wrap gap-1">
-            {item.genres.map((g) => <span key={g} className="text-[11px] px-1.5 py-0.5 bg-gray-800 text-gray-400 rounded">{g}</span>)}
-          </div>
-        )}
+        <TagList genres={item.genres} maker={item.maker} label={item.label} series={item.series} director={item.director} />
 
-        <div className="rounded-xl border border-gray-800 bg-[#111] overflow-hidden">
-          {outputs.map((output, idx) => (
-            <div key={output.id} className={idx > 0 ? 'border-t border-gray-800' : ''}>
-              <FlowNode
-                label="Source"
-                filename={getFilename(output.srcPath) || 'Original source unavailable'}
-                pathHint={getParentPath(output.srcPath) || 'Source path missing'}
-                meta={[output.resolution, output.videoCodec, output.bitrate, formatFileSize(output.fileSize)].filter(Boolean) as string[]}
-                icon={Film}
-              />
-
-              <div className="relative flex justify-center py-2">
-                <div className="absolute left-3 right-3 top-1/2 h-px -translate-y-1/2 bg-gray-800" />
-                <span className="relative inline-flex items-center gap-1 rounded-full border border-indigo-500/20 bg-[#171717] px-2 py-0.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-indigo-300">
-                  <Link2 size={10} />
-                  {output.linkType}
-                </span>
-              </div>
-
-              <FlowNode
-                label="Output"
-                filename={getFilename(output.linkPath) || item.number}
-                pathHint={getParentPath(output.linkPath)}
-                meta={['Nfo', 'CoverIMG']}
-                icon={FileVideo}
-              />
+        {/* File tree */}
+        <details className="rounded-lg border border-gray-800 bg-[#111] overflow-hidden group/tree">
+          {/* Summary: single file or multi-part aggregate */}
+          <summary className="flex items-center gap-2 px-3 py-2.5 cursor-pointer hover:bg-[#161616] transition text-xs">
+            <ChevronRight size={12} className="text-gray-500 transition-transform group-open/tree:rotate-90 shrink-0" />
+            <FileVideo size={14} className="text-emerald-400 shrink-0" />
+            {multiPart ? (
+              <span className="text-gray-300">{outputs.length} files</span>
+            ) : (
+              <span className="text-gray-300 truncate">{getFilename(outputs[0]?.srcPath) || getFilename(outputs[0]?.linkPath)}</span>
+            )}
+            <div className="flex gap-1 ml-auto shrink-0">
+              {!multiPart && outputs[0]?.resolution && (
+                <span className="px-1 py-0.5 bg-gray-800 text-gray-400 rounded text-[11px]">{outputs[0].resolution}</span>
+              )}
+              {!multiPart && outputs[0]?.videoCodec && (
+                <span className="px-1 py-0.5 bg-gray-800 text-gray-400 rounded text-[11px]">{outputs[0].videoCodec}</span>
+              )}
+              <span className="px-1 py-0.5 bg-gray-800 text-gray-400 rounded text-[11px]">{formatFileSize(totalSize)}</span>
             </div>
-          ))}
-        </div>
+          </summary>
+
+          <div className="border-t border-gray-800">
+            {multiPart ? (
+              <>
+                {outputs.map((output) => (
+                  <div key={output.id}>
+                    {/* Video file */}
+                    <div className="flex items-center gap-2 px-3 py-2 hover:bg-[#161616] transition">
+                      <TreeLine />
+                      <FileVideo size={14} className="text-emerald-400 shrink-0" />
+                      <span className="text-xs text-gray-300 truncate">{getFilename(output.srcPath) || getFilename(output.linkPath)}</span>
+                      <div className="flex gap-1 ml-auto shrink-0">
+                        {output.resolution && <span className="px-1 py-0.5 bg-gray-800 text-gray-400 rounded text-[11px]">{output.resolution}</span>}
+                        {output.videoCodec && <span className="px-1 py-0.5 bg-gray-800 text-gray-400 rounded text-[11px]">{output.videoCodec}</span>}
+                        <span className="text-[11px] text-gray-600">{formatFileSize(output.fileSize)}</span>
+                      </div>
+                    </div>
+                    {/* Source */}
+                    <LinkRow output={output} nested />
+                  </div>
+                ))}
+              </>
+            ) : (
+              /* Single part: source directly */
+              <LinkRow output={outputs[0]} />
+            )}
+
+            {/* Sidecar files */}
+            {(item.nfoPath || item.coverPath || item.rawPath) && (
+              <div className="border-t border-gray-800/50">
+                {item.nfoPath && <SidecarRow icon="file" name={getFilename(item.nfoPath)} />}
+                {item.coverPath && <SidecarRow icon="image" name={getFilename(item.coverPath)} />}
+                {item.rawPath && <SidecarRow icon="file" name={getFilename(item.rawPath)} />}
+              </div>
+            )}
+          </div>
+        </details>
 
         {error && (
           <div className="text-xs text-red-400 bg-red-500/10 px-3 py-2 rounded-lg">
@@ -149,6 +191,8 @@ export default function LibraryCard({ item, onAction }: Props) {
           </button>
         </div>
       </div>
+
+      {/* Unlink confirmation modal */}
       <Modal open={showUnlinkConfirm} onClose={() => !unlinking && setShowUnlinkConfirm(false)} title={`Unlink ${item.number}`}>
         <div className="space-y-4">
           <p className="text-sm text-gray-400">
@@ -184,49 +228,40 @@ export default function LibraryCard({ item, onAction }: Props) {
   )
 }
 
-function FlowNode({
-  label,
-  filename,
-  pathHint,
-  meta,
-  icon: Icon,
-}: {
-  label: string
-  filename: string
-  pathHint?: string
-  meta?: string[]
-  icon: LucideIcon
-}) {
-  const labelColor = label === 'Output' ? 'text-indigo-300' : 'text-gray-600'
+function TreeLine({ nested }: { nested?: boolean }) {
+  if (nested) {
+    return (
+      <>
+        <div className="w-3 ml-0.5 border-l border-gray-700/50 shrink-0" />
+        <div className="w-3 ml-0.5 border-l border-b border-gray-700 h-3 rounded-bl-sm shrink-0" />
+      </>
+    )
+  }
+  return <div className="w-3 ml-0.5 border-l border-b border-gray-700 h-3 rounded-bl-sm shrink-0" />
+}
 
+function LinkRow({ output, nested }: { output: BangouFileResponse; nested?: boolean }) {
+  if (!output?.linkPath) return null
   return (
-    <div className="flex items-center gap-3 px-3 py-3">
-      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-gray-800 bg-[#171717]">
-        <Icon size={14} className="text-gray-500" />
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className={`mb-1 text-[11px] font-semibold uppercase tracking-[0.16em] ${labelColor}`}>{label}</div>
-        <div className="truncate text-sm text-gray-300">{filename}</div>
-        {pathHint && <div className="truncate text-[11px] text-gray-600">{pathHint}</div>}
-      </div>
-      {meta && meta.length > 0 && (
-        <div className="hidden max-w-[48%] flex-wrap justify-end gap-1 sm:flex">
-          {meta.map((value) => (
-            <span key={`${label}-${value}`} className="rounded bg-gray-800 px-1.5 py-0.5 text-[11px] text-gray-400">
-              {value}
-            </span>
-          ))}
-        </div>
-      )}
+    <div className="flex items-center gap-2 px-3 py-1.5 hover:bg-[#161616] transition">
+      <TreeLine nested={nested} />
+      <LinkIcon size={12} className="text-gray-600 shrink-0" />
+      <span className="text-[11px] text-gray-300 truncate">{getFilename(output.linkPath)}</span>
+      <span className="px-1 py-0.5 bg-indigo-500/10 text-indigo-400 rounded text-[11px] ml-auto shrink-0">{output.linkType}</span>
     </div>
   )
 }
 
-function getParentPath(path: string) {
-  if (!path) return ''
-  const parts = path.split('/')
-  parts.pop()
-  return parts.join('/')
+function SidecarRow({ icon, name }: { icon: 'file' | 'image'; name: string }) {
+  return (
+    <div className="flex items-center gap-2 px-3 py-1.5 hover:bg-[#161616] transition">
+      <TreeLine />
+      {icon === 'image'
+        ? <Image size={14} className="text-gray-500 shrink-0" />
+        : <FileText size={14} className="text-gray-500 shrink-0" />}
+      <span className="text-xs text-gray-500 truncate">{name}</span>
+    </div>
+  )
 }
 
 function getFilename(path: string) {
@@ -236,9 +271,7 @@ function getFilename(path: string) {
 }
 
 function formatFileSize(fileSize: number) {
-  if (fileSize <= 0) {
-    return ''
-  }
+  if (fileSize <= 0) return ''
   return `${(fileSize / (1024 * 1024 * 1024)).toFixed(2)} GB`
 }
 
@@ -249,17 +282,13 @@ type UnlinkTarget = {
 
 function buildUnlinkTargets(bangou: BangouResponse, outputs: BangouResponse['outputs']) {
   const out: UnlinkTarget[] = []
-
   for (const output of outputs) {
     const linkPath = (output.linkPath || '').trim()
-    if (linkPath) {
-      out.push({ kind: 'Link', path: linkPath })
-    }
+    if (linkPath) out.push({ kind: 'Link', path: linkPath })
   }
-
   if (bangou.nfoPath) out.push({ kind: 'NFO', path: bangou.nfoPath })
   if (bangou.coverPath) out.push({ kind: 'Cover', path: bangou.coverPath })
   if (bangou.rawPath) out.push({ kind: 'Raw', path: bangou.rawPath })
-
   return out
 }
+

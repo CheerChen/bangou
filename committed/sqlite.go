@@ -266,9 +266,7 @@ func (s *SQLiteStore) ListAllBangous(ctx context.Context) ([]Bangou, error) {
 func (s *SQLiteStore) IsBangouCommitted(ctx context.Context, pipelineID int64, number string) (bool, error) {
 	var count int
 	err := s.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM bangous b
-		 JOIN bangou_files bf ON bf.bangou_id = b.id
-		 WHERE b.pipeline_id = ? AND b.number = ? AND bf.alive = TRUE`,
+		`SELECT COUNT(*) FROM bangous WHERE pipeline_id = ? AND number = ?`,
 		pipelineID, number,
 	).Scan(&count)
 	return count > 0, err
@@ -416,8 +414,8 @@ func (s *SQLiteStore) UpsertMetadata(ctx context.Context, m *Metadata) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO metadata (bangou_id, number, title, plot, director, maker, label, series,
 		                       actors, genres, cover_url, sample_images, premiered, year, runtime,
-		                       rating, review_count, page_url, content_id, provider, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		                       rating, review_count, sample_movie_url, page_url, content_id, provider, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(bangou_id) DO UPDATE SET
 		   number=excluded.number,
 		   title=excluded.title, plot=excluded.plot, director=excluded.director,
@@ -425,12 +423,13 @@ func (s *SQLiteStore) UpsertMetadata(ctx context.Context, m *Metadata) error {
 		   actors=excluded.actors, genres=excluded.genres, cover_url=excluded.cover_url,
 		   sample_images=excluded.sample_images, premiered=excluded.premiered,
 		   year=excluded.year, runtime=excluded.runtime, rating=excluded.rating,
-		   review_count=excluded.review_count, page_url=excluded.page_url,
+		   review_count=excluded.review_count, sample_movie_url=excluded.sample_movie_url,
+		   page_url=excluded.page_url,
 		   content_id=excluded.content_id, provider=excluded.provider,
 		   updated_at=excluded.updated_at`,
 		m.BangouID, m.Number, m.Title, m.Plot, m.Director, m.Maker, m.Label, m.Series,
 		m.Actors, m.Genres, m.CoverURL, m.SampleImages, m.Premiered, m.Year, m.Runtime,
-		m.Rating, m.ReviewCount, m.PageURL, m.ContentID, m.Provider, time.Now(),
+		m.Rating, m.ReviewCount, m.SampleMovieURL, m.PageURL, m.ContentID, m.Provider, time.Now(),
 	)
 	return err
 }
@@ -440,12 +439,12 @@ func (s *SQLiteStore) GetMetadataByBangou(ctx context.Context, bangouID int64) (
 	err := s.db.QueryRowContext(ctx,
 		`SELECT id, bangou_id, number, title, plot, director, maker, label, series,
 		        actors, genres, cover_url, sample_images, premiered, year, runtime,
-		        rating, review_count, page_url, content_id, provider,
+		        rating, review_count, sample_movie_url, page_url, content_id, provider,
 		        created_at, updated_at
 		 FROM metadata WHERE bangou_id = ?`, bangouID,
 	).Scan(&m.ID, &m.BangouID, &m.Number, &m.Title, &m.Plot, &m.Director, &m.Maker, &m.Label, &m.Series,
 		&m.Actors, &m.Genres, &m.CoverURL, &m.SampleImages, &m.Premiered, &m.Year, &m.Runtime,
-		&m.Rating, &m.ReviewCount, &m.PageURL, &m.ContentID, &m.Provider,
+		&m.Rating, &m.ReviewCount, &m.SampleMovieURL, &m.PageURL, &m.ContentID, &m.Provider,
 		&m.CreatedAt, &m.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil

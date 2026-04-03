@@ -200,6 +200,7 @@ type ScrapeResponse struct {
 type MetaResponse struct {
 	Number       string   `json:"number"`
 	Title        string   `json:"title"`
+	Director     string   `json:"director,omitempty"`
 	Maker        string   `json:"maker,omitempty"`
 	Label        string   `json:"label,omitempty"`
 	Series       string   `json:"series,omitempty"`
@@ -212,8 +213,9 @@ type MetaResponse struct {
 	Runtime      string   `json:"runtime,omitempty"`
 	Rating       string   `json:"rating,omitempty"`
 	ReviewCount  int      `json:"reviewCount"`
-	PageURL      string   `json:"pageURL,omitempty"`
-	Provider     string   `json:"provider,omitempty"`
+	SampleMovieURL string `json:"sampleMovieURL,omitempty"`
+	PageURL        string `json:"pageURL,omitempty"`
+	Provider       string `json:"provider,omitempty"`
 }
 
 type UnknownResponse struct {
@@ -284,11 +286,11 @@ func buildGroupResponse(g staging.StagingGroup) GroupResponse {
 	if g.Scrape.Meta != nil {
 		mm := g.Scrape.Meta
 		gr.Scrape.Meta = &MetaResponse{
-			Number: mm.Number, Title: mm.Title, Maker: mm.Maker, Label: mm.Label,
+			Number: mm.Number, Title: mm.Title, Director: mm.Director, Maker: mm.Maker, Label: mm.Label,
 			Series: mm.Series, Actors: mm.Actors, Genres: mm.Genres, CoverURL: mm.CoverURL,
 			SampleImages: mm.SampleImages, Premiered: mm.Premiered, Year: mm.Year,
 			Runtime: mm.Runtime, Rating: mm.Rating, ReviewCount: mm.ReviewCount,
-			PageURL: mm.PageURL, Provider: mm.Provider,
+			SampleMovieURL: mm.SampleMovieURL, PageURL: mm.PageURL, Provider: mm.Provider,
 		}
 	}
 	return gr
@@ -544,7 +546,11 @@ type LibraryBangouResponse struct {
 	ReviewCount  int                   `json:"reviewCount"`
 	PageURL      string                `json:"pageURL,omitempty"`
 	Maker        string                `json:"maker,omitempty"`
-	Premiered    string                `json:"premiered,omitempty"`
+	Label        string                `json:"label,omitempty"`
+	Series       string                `json:"series,omitempty"`
+	Director       string                `json:"director,omitempty"`
+	SampleMovieURL string                `json:"sampleMovieURL,omitempty"`
+	Premiered      string                `json:"premiered,omitempty"`
 	Year         string                `json:"year,omitempty"`
 	Runtime      string                `json:"runtime,omitempty"`
 	Provider     string                `json:"provider,omitempty"`
@@ -605,6 +611,10 @@ func (h *Handlers) ListLibrary(w http.ResponseWriter, r *http.Request) {
 			lv.ReviewCount = meta.ReviewCount
 			lv.PageURL = meta.PageURL
 			lv.Maker = meta.Maker
+			lv.Label = meta.Label
+			lv.Series = meta.Series
+			lv.Director = meta.Director
+			lv.SampleMovieURL = meta.SampleMovieURL
 			lv.Premiered = meta.Premiered
 			lv.Year = meta.Year
 			lv.Runtime = meta.Runtime
@@ -679,6 +689,7 @@ func (h *Handlers) LibraryRescrapeApply(w http.ResponseWriter, r *http.Request) 
 			SampleImages: strings.Join(res.New.SampleImages, ","),
 			Premiered:    res.New.Premiered, Year: res.New.Year, Runtime: res.New.Runtime,
 			Rating: res.New.Rating, ReviewCount: res.New.ReviewCount,
+			SampleMovieURL: res.New.SampleMovieURL,
 			PageURL: res.New.PageURL, ContentID: res.New.ContentID, Provider: res.New.Provider,
 		})
 	}
