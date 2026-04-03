@@ -103,7 +103,7 @@ export default function PipelineDetail() {
   }
 
   return (
-    <div className="pb-24">
+    <div className="pb-32">
       {/* Breadcrumb */}
       <div className="flex items-center gap-2 text-sm mb-4">
         <Link to="/" className="text-gray-500 hover:text-white transition">bangou</Link>
@@ -144,7 +144,10 @@ export default function PipelineDetail() {
               )}
             </>
           ) : (
-            <div className="text-center text-gray-600 py-12">No pending groups.</div>
+            <div className="text-center py-12">
+              <p className="text-gray-500 mb-2">No pending groups</p>
+              <p className="text-xs text-gray-700">Files added to the input directory will appear here automatically.</p>
+            </div>
           )}
         </>
       )}
@@ -156,7 +159,7 @@ export default function PipelineDetail() {
               <ArrowUpDown size={12} className="text-gray-600" />
               {['added', 'number', 'date', 'rating'].map((key) => (
                 <button key={key} onClick={() => toggleSort(key)}
-                  className={`text-xs px-2.5 py-1 rounded-lg transition ${libSort === key ? 'bg-indigo-600 text-white' : 'bg-[#1a1a1a] text-gray-500 hover:text-white border border-gray-800'}`}>
+                  className={`text-xs px-2.5 py-1 rounded-lg transition-all duration-200 ${libSort === key ? 'bg-indigo-600 text-white shadow-sm shadow-indigo-500/20' : 'bg-[#1a1a1a] text-gray-500 hover:text-white border border-gray-800'}`}>
                   {key}{libSort === key && (libSortDir === 'desc' ? ' ↓' : ' ↑')}
                 </button>
               ))}
@@ -171,7 +174,10 @@ export default function PipelineDetail() {
               {libData.items.map((item) => <LibraryCard key={item.number} item={item} onAction={fetchLibrary} />)}
             </div>
           ) : (
-            <div className="text-center text-gray-600 py-12">No committed outputs yet.</div>
+            <div className="text-center py-12">
+              <p className="text-gray-500 mb-2">Library is empty</p>
+              <p className="text-xs text-gray-700">Link groups from the Pending tab to build your library.</p>
+            </div>
           )}
 
           {/* Library pagination */}
@@ -215,20 +221,41 @@ export default function PipelineDetail() {
 }
 
 function Pagination({ page, totalPages, onPage }: { page: number; totalPages: number; onPage: (p: number) => void }) {
+  const pages = paginationRange(page, totalPages)
   return (
     <div className="flex items-center justify-center gap-3 mt-6">
       <button onClick={() => onPage(Math.max(0, page - 1))} disabled={page === 0}
+        aria-label="Previous page"
         className="p-2 text-gray-500 hover:text-white disabled:opacity-20 transition"><ChevronLeft size={16} /></button>
       <div className="flex gap-1">
-        {Array.from({ length: totalPages }, (_, i) => (
-          <button key={i} onClick={() => onPage(i)}
-            className={`w-8 h-8 text-xs rounded-lg transition ${i === page ? 'bg-indigo-600 text-white' : 'bg-[#1a1a1a] text-gray-500 hover:text-white border border-gray-800'}`}>
-            {i + 1}
-          </button>
-        ))}
+        {pages.map((p, idx) =>
+          p === -1 ? (
+            <span key={`ellipsis-${idx}`} className="w-8 h-8 flex items-center justify-center text-xs text-gray-600">…</span>
+          ) : (
+            <button key={p} onClick={() => onPage(p)}
+              className={`w-8 h-8 text-xs rounded-lg transition ${p === page ? 'bg-indigo-600 text-white' : 'bg-[#1a1a1a] text-gray-500 hover:text-white border border-gray-800'}`}>
+              {p + 1}
+            </button>
+          )
+        )}
       </div>
       <button onClick={() => onPage(Math.min(totalPages - 1, page + 1))} disabled={page >= totalPages - 1}
+        aria-label="Next page"
         className="p-2 text-gray-500 hover:text-white disabled:opacity-20 transition"><ChevronRight size={16} /></button>
     </div>
   )
+}
+
+// Returns page indices to render, with -1 for ellipsis gaps.
+// Always shows first, last, and up to 2 pages around current.
+function paginationRange(current: number, total: number): number[] {
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i)
+  const pages: number[] = []
+  const near = new Set([0, 1, current - 1, current, current + 1, total - 2, total - 1])
+  const sorted = [...near].filter((p) => p >= 0 && p < total).sort((a, b) => a - b)
+  for (let i = 0; i < sorted.length; i++) {
+    if (i > 0 && sorted[i] - sorted[i - 1] > 1) pages.push(-1)
+    pages.push(sorted[i])
+  }
+  return pages
 }

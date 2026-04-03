@@ -1,13 +1,13 @@
 import { useRef, useState } from 'react'
-import { ExternalLink, RefreshCw, Unlink, CheckCircle, AlertCircle, Layers, FileVideo, Link2, Film } from 'lucide-react'
+import { ExternalLink, RefreshCw, Unlink, CheckCircle, AlertCircle, Layers, FileVideo, Link2, Film, Loader2 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import * as api from '../api/client'
-import type { LibraryGroupResponse } from '../api/client'
+import type { BangouResponse } from '../api/client'
 import { useLightbox, type LightboxItem } from './Lightbox'
 import Modal from './Modal'
 
 interface Props {
-  item: LibraryGroupResponse
+  item: BangouResponse
   onAction: () => void
 }
 
@@ -16,27 +16,30 @@ export default function LibraryCard({ item, onAction }: Props) {
   const imgRef = useRef<HTMLImageElement>(null)
   const [showUnlinkConfirm, setShowUnlinkConfirm] = useState(false)
   const [unlinking, setUnlinking] = useState(false)
+  const [rescraping, setRescraping] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const outputs = item.outputs || []
   const allAlive = outputs.length > 0 && outputs.every((o) => o.alive)
-  const unlinkTargets = buildUnlinkTargets(item.number, outputs)
+  const unlinkTargets = buildUnlinkTargets(item, outputs)
 
   const handleRescrape = async () => {
-    try { await api.libraryRescrape(item.number) } catch { /* */ }
+    setRescraping(true)
+    setError(null)
+    try { await api.libraryRescrape(item.number) } catch (e: any) { setError(e.message) }
+    setRescraping(false)
   }
   const handleUnlink = () => {
     if (outputs.length === 0) return
     setShowUnlinkConfirm(true)
   }
   const handleUnlinkConfirm = async () => {
-    if (outputs.length === 0) return
     setUnlinking(true)
+    setError(null)
     try {
-      for (const output of outputs) {
-        await api.unlinkOutput(output.id, item.number)
-      }
+      await api.unlinkBangou(item.id)
       setShowUnlinkConfirm(false)
       onAction()
-    } catch (e: any) { alert(e.message) }
+    } catch (e: any) { setError(e.message) }
     setUnlinking(false)
   }
   const galleryItems: LightboxItem[] = item.coverURL
@@ -56,18 +59,20 @@ export default function LibraryCard({ item, onAction }: Props) {
       {item.coverURL && (
         <div className="relative aspect-[16/9] overflow-hidden bg-black group/cover cursor-pointer"
           onClick={() => lightbox.open(galleryItems, 0, imgRef.current || undefined)}>
-          <img ref={imgRef} src={item.coverURL} alt="" className="w-full h-full object-cover opacity-90 group-hover/cover:scale-105 transition-transform duration-300" />
+          <img ref={imgRef} src={item.coverURL} alt={`${item.number} cover`}
+            className="w-full h-full object-cover opacity-90 group-hover/cover:scale-105 transition-transform duration-300 motion-reduce:transition-none motion-reduce:group-hover/cover:scale-100" />
           <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent" />
           {item.pageURL && (
             <a href={item.pageURL} target="_blank" rel="noopener" onClick={(e) => e.stopPropagation()}
-              className="absolute top-3 right-3 p-1.5 bg-black/50 hover:bg-black/80 rounded-lg text-gray-400 hover:text-white transition">
+              aria-label={`Open ${item.number} page`}
+              className="absolute top-2 right-2 p-2.5 bg-black/50 hover:bg-black/80 rounded-lg text-gray-400 hover:text-white transition">
               <ExternalLink size={14} />
             </a>
           )}
           {(() => {
             const count = 1 + (item.sampleImages?.length || 0); return count > 1 ? (
-              <span className="absolute top-3 left-3 flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-amber-500/80 text-[10px] font-bold text-white">
-                <Layers size={10} />{count}
+              <span className="absolute top-2 left-2 flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-amber-500/80 text-xs font-bold text-white">
+                <Layers size={11} />{count}
               </span>
             ) : null
           })()}
@@ -90,7 +95,7 @@ export default function LibraryCard({ item, onAction }: Props) {
         </dl>
         {item.genres && item.genres.length > 0 && (
           <div className="flex flex-wrap gap-1">
-            {item.genres.map((g) => <span key={g} className="text-[10px] px-1.5 py-0.5 bg-gray-800 text-gray-500 rounded">{g}</span>)}
+            {item.genres.map((g) => <span key={g} className="text-[11px] px-1.5 py-0.5 bg-gray-800 text-gray-400 rounded">{g}</span>)}
           </div>
         )}
 
@@ -107,7 +112,7 @@ export default function LibraryCard({ item, onAction }: Props) {
 
               <div className="relative flex justify-center py-2">
                 <div className="absolute left-3 right-3 top-1/2 h-px -translate-y-1/2 bg-gray-800" />
-                <span className="relative inline-flex items-center gap-1 rounded-full border border-indigo-500/20 bg-[#171717] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-indigo-300">
+                <span className="relative inline-flex items-center gap-1 rounded-full border border-indigo-500/20 bg-[#171717] px-2 py-0.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-indigo-300">
                   <Link2 size={10} />
                   {output.linkType}
                 </span>
@@ -124,12 +129,22 @@ export default function LibraryCard({ item, onAction }: Props) {
           ))}
         </div>
 
+        {error && (
+          <div className="text-xs text-red-400 bg-red-500/10 px-3 py-2 rounded-lg">
+            {error}
+            <button onClick={() => setError(null)} className="ml-2 text-red-300 hover:text-white">✕</button>
+          </div>
+        )}
+
         {/* Actions */}
         <div className="flex gap-1.5 pt-2 border-t border-gray-800 mt-auto">
-          <button onClick={handleRescrape} className="flex items-center gap-1 text-xs px-2.5 py-1.5 text-gray-500 hover:text-white hover:bg-[#222] rounded-lg transition">
-            <RefreshCw size={12} />Rescrape
+          <button onClick={handleRescrape} disabled={rescraping}
+            className="flex items-center gap-1 text-xs px-2.5 py-1.5 text-gray-500 hover:text-white hover:bg-[#222] rounded-lg transition disabled:opacity-50">
+            {rescraping ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+            Rescrape
           </button>
-          <button onClick={handleUnlink} className="flex items-center gap-1 text-xs px-2.5 py-1.5 text-gray-500 hover:text-amber-400 hover:bg-[#222] rounded-lg transition">
+          <button onClick={handleUnlink}
+            className="flex items-center gap-1 text-xs px-2.5 py-1.5 text-gray-500 hover:text-amber-400 hover:bg-[#222] rounded-lg transition">
             <Unlink size={12} />Unlink
           </button>
         </div>
@@ -142,7 +157,7 @@ export default function LibraryCard({ item, onAction }: Props) {
           <div className="rounded-lg border border-gray-800 bg-[#111] max-h-64 overflow-y-auto">
             {unlinkTargets.map((target) => (
               <div key={`${target.kind}-${target.path}`} className="flex items-center gap-2 border-b border-gray-800 last:border-b-0 px-3 py-2">
-                <span className="rounded bg-gray-800 px-1.5 py-0.5 text-[10px] text-gray-400">{target.kind}</span>
+                <span className="rounded bg-gray-800 px-1.5 py-0.5 text-[11px] text-gray-400">{target.kind}</span>
                 <code className="min-w-0 flex-1 truncate text-xs text-gray-500">{target.path}</code>
               </div>
             ))}
@@ -190,14 +205,14 @@ function FlowNode({
         <Icon size={14} className="text-gray-500" />
       </div>
       <div className="min-w-0 flex-1">
-        <div className={`mb-1 text-[10px] font-semibold uppercase tracking-[0.16em] ${labelColor}`}>{label}</div>
+        <div className={`mb-1 text-[11px] font-semibold uppercase tracking-[0.16em] ${labelColor}`}>{label}</div>
         <div className="truncate text-sm text-gray-300">{filename}</div>
         {pathHint && <div className="truncate text-[11px] text-gray-600">{pathHint}</div>}
       </div>
       {meta && meta.length > 0 && (
         <div className="hidden max-w-[48%] flex-wrap justify-end gap-1 sm:flex">
           {meta.map((value) => (
-            <span key={`${label}-${value}`} className="rounded bg-gray-800 px-1.5 py-0.5 text-[10px] text-gray-500">
+            <span key={`${label}-${value}`} className="rounded bg-gray-800 px-1.5 py-0.5 text-[11px] text-gray-400">
               {value}
             </span>
           ))}
@@ -228,50 +243,23 @@ function formatFileSize(fileSize: number) {
 }
 
 type UnlinkTarget = {
-  kind: 'Link' | 'NFO' | 'IMG'
+  kind: 'Link' | 'NFO' | 'Cover' | 'Raw'
   path: string
 }
 
-function buildUnlinkTargets(number: string, outputs: LibraryGroupResponse['outputs']) {
+function buildUnlinkTargets(bangou: BangouResponse, outputs: BangouResponse['outputs']) {
   const out: UnlinkTarget[] = []
-  const seen = new Set<string>()
-  const dirs = new Set<string>()
 
   for (const output of outputs) {
     const linkPath = (output.linkPath || '').trim()
-    if (!linkPath) continue
-
-    const linkKey = `link:${linkPath}`
-    if (!seen.has(linkKey)) {
-      seen.add(linkKey)
+    if (linkPath) {
       out.push({ kind: 'Link', path: linkPath })
     }
-
-    const dir = getParentPath(linkPath)
-    if (dir) dirs.add(dir)
   }
 
-  for (const dir of dirs) {
-    const nfo = joinPath(dir, `${number}.nfo`)
-    const nfoKey = `nfo:${nfo}`
-    if (!seen.has(nfoKey)) {
-      seen.add(nfoKey)
-      out.push({ kind: 'NFO', path: nfo })
-    }
-
-    const img = joinPath(dir, `${number}.(jpg|png|webp|gif)`)
-    const imgKey = `img:${img}`
-    if (!seen.has(imgKey)) {
-      seen.add(imgKey)
-      out.push({ kind: 'IMG', path: img })
-    }
-  }
+  if (bangou.nfoPath) out.push({ kind: 'NFO', path: bangou.nfoPath })
+  if (bangou.coverPath) out.push({ kind: 'Cover', path: bangou.coverPath })
+  if (bangou.rawPath) out.push({ kind: 'Raw', path: bangou.rawPath })
 
   return out
-}
-
-function joinPath(dir: string, name: string) {
-  if (!dir) return name
-  if (dir.endsWith('/')) return `${dir}${name}`
-  return `${dir}/${name}`
 }

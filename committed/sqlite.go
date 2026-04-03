@@ -243,6 +243,26 @@ func (s *SQLiteStore) ListBangousByPipeline(ctx context.Context, pipelineID int6
 	return out, total, rows.Err()
 }
 
+func (s *SQLiteStore) ListAllBangous(ctx context.Context) ([]Bangou, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, pipeline_id, number, out_dir, nfo_path, cover_path, raw_path, created_at, updated_at
+		 FROM bangous ORDER BY id ASC`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Bangou
+	for rows.Next() {
+		var b Bangou
+		if err := rows.Scan(&b.ID, &b.PipelineID, &b.Number, &b.OutDir, &b.NFOPath, &b.CoverPath, &b.RawPath, &b.CreatedAt, &b.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
 func (s *SQLiteStore) IsBangouCommitted(ctx context.Context, pipelineID int64, number string) (bool, error) {
 	var count int
 	err := s.db.QueryRowContext(ctx,

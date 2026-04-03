@@ -2,8 +2,6 @@ package web
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -531,8 +529,12 @@ type LibraryFileResponse struct {
 }
 
 type LibraryBangouResponse struct {
+	ID           int64                 `json:"id"`
 	Number       string                `json:"number"`
 	Files        []LibraryFileResponse `json:"outputs"` // JSON key kept as "outputs" for frontend compat
+	NFOPath      string                `json:"nfoPath,omitempty"`
+	CoverPath    string                `json:"coverPath,omitempty"`
+	RawPath      string                `json:"rawPath,omitempty"`
 	Title        string                `json:"title,omitempty"`
 	Actors       string                `json:"actors,omitempty"`
 	Genres       []string              `json:"genres,omitempty"`
@@ -581,7 +583,7 @@ func (h *Handlers) ListLibrary(w http.ResponseWriter, r *http.Request) {
 
 	items := make([]LibraryBangouResponse, 0, len(bangous))
 	for _, b := range bangous {
-		lv := LibraryBangouResponse{Number: b.Number}
+		lv := LibraryBangouResponse{ID: b.ID, Number: b.Number, NFOPath: b.NFOPath, CoverPath: b.CoverPath, RawPath: b.RawPath}
 
 		files, _ := h.store.ListBangouFilesByBangou(ctx, b.ID)
 		lv.Files = make([]LibraryFileResponse, 0, len(files))
@@ -690,47 +692,34 @@ func (h *Handlers) LibraryRescrapeDismiss(w http.ResponseWriter, r *http.Request
 	writeOK(w, map[string]string{"status": "dismissed"})
 }
 
-// ── Output Actions ──
+// ── Bangou Actions ──
 
-func (h *Handlers) UnlinkOutput(w http.ResponseWriter, r *http.Request) {
+func (h *Handlers) UnlinkBangou(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		writeError(w, 400, "invalid id")
 		return
 	}
-	file, err := h.store.GetBangouFileByID(r.Context(), id)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			writeError(w, 404, "file not found")
-			return
-		}
-		writeError(w, 500, err.Error())
-		return
-	}
-	bangou, err := h.store.GetBangou(r.Context(), file.BangouID)
+	bangou, err := h.store.GetBangou(r.Context(), id)
 	if err != nil || bangou == nil {
 		writeError(w, 404, "bangou not found")
 		return
 	}
-
-	var req struct {
-		Number string `json:"number"`
-	}
-	_ = readJSON(r, &req)
-	number := strings.ToUpper(strings.TrimSpace(req.Number))
-	if number != "" && number != bangou.Number {
-		writeError(w, 400, "number mismatch")
-		return
-	}
-
 	rt := h.registry.Get(bangou.PipelineID)
 	if rt == nil {
 		writeError(w, 404, "pipeline runtime not found")
 		return
 	}
-	if err := rt.Executor.Unlink(r.Context(), file); err != nil {
+	files, err := h.store.ListBangouFilesByBangou(r.Context(), bangou.ID)
+	if err != nil {
 		writeError(w, 500, err.Error())
 		return
+	}
+	for _, f := range files {
+		if err := rt.Executor.Unlink(r.Context(), &f); err != nil {
+			writeError(w, 500, err.Error())
+			return
+		}
 	}
 	go rt.Scan(context.Background(), h.store)
 	writeOK(w, map[string]string{"status": "unlinked"})

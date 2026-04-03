@@ -157,13 +157,13 @@ export const linkAllProgress = (pipelineId: number) =>
 // ── Library ──
 
 export interface LibraryPage {
-  items: LibraryGroupResponse[]
+  items: BangouResponse[]
   total: number
   page: number
   size: number
 }
 
-export interface LibraryOutputResponse {
+export interface BangouFileResponse {
   id: number
   srcPath: string
   linkPath: string
@@ -177,9 +177,13 @@ export interface LibraryOutputResponse {
   alive: boolean
 }
 
-export interface LibraryGroupResponse {
+export interface BangouResponse {
+  id: number
   number: string
-  outputs: LibraryOutputResponse[]
+  outputs: BangouFileResponse[]
+  nfoPath?: string
+  coverPath?: string
+  rawPath?: string
   title?: string
   actors?: string
   genres?: string[]
@@ -209,8 +213,8 @@ export const libraryApply = (number: string) =>
 export const libraryDismiss = (number: string) =>
   request<unknown>('POST', `/library/${number}/dismiss`, {})
 
-export const unlinkOutput = (id: number, number: string) =>
-  request<unknown>('POST', `/outputs/${id}/unlink`, { number })
+export const unlinkBangou = (bangouId: number) =>
+  request<unknown>('POST', `/bangous/${bangouId}/unlink`, {})
 
 // ── Provider Configs ──
 

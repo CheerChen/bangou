@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react'
-import { ExternalLink, RefreshCw, Merge, Link2, FileVideo, Check, Download, HelpCircle, ChevronDown, ChevronUp, AlertTriangle, Tag, Layers } from 'lucide-react'
+import { ExternalLink, RefreshCw, Merge, Link2, FileVideo, Check, Download, HelpCircle, ChevronDown, ChevronUp, AlertTriangle, Tag, Layers, Loader2 } from 'lucide-react'
 import * as api from '../api/client'
 import type { GroupResponse } from '../api/client'
 import { useLightbox, type LightboxItem } from './Lightbox'
@@ -18,6 +18,8 @@ export default function GroupCard({ group, pipelineId, onAction }: Props) {
   })
   const [errorsOpen, setErrorsOpen] = useState(false)
   const [tagInput, setTagInput] = useState('')
+  const [actionError, setActionError] = useState<string | null>(null)
+  const [rescraping, setRescraping] = useState(false)
   const lightbox = useLightbox()
   const imgRef = useRef<HTMLImageElement>(null)
 
@@ -48,15 +50,20 @@ export default function GroupCard({ group, pipelineId, onAction }: Props) {
     const paths = [...selected]
     if (paths.length === 0) return
     if (selectedExtCount !== 1) return
-    try { await api.groupLink(pipelineId, group.number, paths); onAction() } catch (e: any) { alert(e.message) }
+    setActionError(null)
+    try { await api.groupLink(pipelineId, group.number, paths); onAction() } catch (e: any) { setActionError(e.message) }
   }
   const handleMerge = async () => {
     const paths = [...selected]
     if (paths.length < 2) return
-    try { await api.groupMerge(pipelineId, group.number, paths); onAction() } catch (e: any) { alert(e.message) }
+    setActionError(null)
+    try { await api.groupMerge(pipelineId, group.number, paths); onAction() } catch (e: any) { setActionError(e.message) }
   }
   const handleRescrape = async () => {
-    try { await api.groupRescrape(pipelineId, group.number); onAction() } catch { /* */ }
+    setRescraping(true)
+    setActionError(null)
+    try { await api.groupRescrape(pipelineId, group.number); onAction() } catch (e: any) { setActionError(e.message) }
+    setRescraping(false)
   }
   const handleTag = async () => {
     if (!tagInput.trim()) return
@@ -68,17 +75,19 @@ export default function GroupCard({ group, pipelineId, onAction }: Props) {
       {!isUnknownLike && meta?.coverURL ? (
         <div className="relative aspect-[16/9] overflow-hidden bg-black group/cover cursor-pointer"
           onClick={() => lightbox.open(galleryItems, 0, imgRef.current || undefined)}>
-          <img ref={imgRef} src={meta.coverURL} alt="" className="w-full h-full object-cover opacity-90 group-hover/cover:scale-105 transition-transform duration-300" />
+          <img ref={imgRef} src={meta.coverURL} alt={`${group.number} cover`}
+            className="w-full h-full object-cover opacity-90 group-hover/cover:scale-105 transition-transform duration-300 motion-reduce:transition-none motion-reduce:group-hover/cover:scale-100" />
           <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent" />
           {meta.pageURL && (
             <a href={meta.pageURL} target="_blank" rel="noopener" onClick={(e) => e.stopPropagation()}
-              className="absolute top-3 right-3 p-1.5 bg-black/50 hover:bg-black/80 rounded-lg text-gray-400 hover:text-white transition">
+              aria-label={`Open ${group.number} page`}
+              className="absolute top-2 right-2 p-2.5 bg-black/50 hover:bg-black/80 rounded-lg text-gray-400 hover:text-white transition">
               <ExternalLink size={14} />
             </a>
           )}
           {(() => { const count = 1 + (meta.sampleImages?.length || 0); return count > 1 ? (
-            <span className="absolute top-3 left-3 flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-amber-500/80 text-[10px] font-bold text-white">
-              <Layers size={10} />{count}
+            <span className="absolute top-2 left-2 flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-amber-500/80 text-xs font-bold text-white">
+              <Layers size={11} />{count}
             </span>
           ) : null })()}
           <div className="absolute bottom-3 left-3 right-3 flex items-end justify-between">
@@ -112,7 +121,7 @@ export default function GroupCard({ group, pipelineId, onAction }: Props) {
             </dl>
             {meta.genres && meta.genres.length > 0 && (
               <div className="flex flex-wrap gap-1">
-                {meta.genres.map((g) => <span key={g} className="text-[10px] px-1.5 py-0.5 bg-gray-800 text-gray-500 rounded">{g}</span>)}
+                {meta.genres.map((g) => <span key={g} className="text-[11px] px-1.5 py-0.5 bg-gray-800 text-gray-400 rounded">{g}</span>)}
               </div>
             )}
           </>
@@ -163,20 +172,28 @@ export default function GroupCard({ group, pipelineId, onAction }: Props) {
                 {item.ready && <span className="text-emerald-400 mr-1">✓</span>}
                 {item.filename}
               </span>
-              {item.resolution && <span className="relative z-10 px-1 py-0.5 bg-gray-800 text-gray-500 rounded text-[10px] hidden sm:inline">{item.resolution}</span>}
-              {item.videoCodec && <span className="relative z-10 px-1 py-0.5 bg-gray-800 text-gray-500 rounded text-[10px] hidden sm:inline">{item.videoCodec}</span>}
+              {item.resolution && <span className="relative z-10 px-1 py-0.5 bg-gray-800 text-gray-400 rounded text-[11px] hidden sm:inline">{item.resolution}</span>}
+              {item.videoCodec && <span className="relative z-10 px-1 py-0.5 bg-gray-800 text-gray-400 rounded text-[11px] hidden sm:inline">{item.videoCodec}</span>}
               <span className="relative z-10 text-gray-600 whitespace-nowrap">{item.sizeGB.toFixed(2)} GB</span>
             </label>
           ))}
         </div>
+
+        {actionError && (
+          <div className="text-xs text-red-400 bg-red-500/10 px-3 py-2 rounded-lg">
+            {actionError}
+            <button onClick={() => setActionError(null)} className="ml-2 text-red-300 hover:text-white">✕</button>
+          </div>
+        )}
 
         <div className="flex items-center justify-between pt-2 border-t border-gray-800 mt-auto">
           <span className="text-xs text-gray-600">{group.items.length} files, {totalGB.toFixed(2)} GB</span>
           <div className="flex gap-1.5">
             {!busy && (
               <>
-                <button onClick={handleRescrape} className="flex items-center gap-1 text-xs px-2.5 py-1.5 text-gray-500 hover:text-white hover:bg-[#222] rounded-lg transition">
-                  <RefreshCw size={12} />Rescrape
+                <button onClick={handleRescrape} disabled={rescraping}
+                  className="flex items-center gap-1 text-xs px-2.5 py-1.5 text-gray-500 hover:text-white hover:bg-[#222] rounded-lg transition disabled:opacity-50">
+                  {rescraping ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}Rescrape
                 </button>
                 {group.items.length > 1 && allReady && !groupHasMixedMkvMp4 && (
                   <button onClick={handleMerge} className="flex items-center gap-1 text-xs px-2.5 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-lg transition">
