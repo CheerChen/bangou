@@ -38,9 +38,9 @@ func TestDMMToMetadata(t *testing.T) {
 
 func TestSelectDMMItemFiltersMismatchedContentID(t *testing.T) {
 	items := []dmmItem{
-		{ContentID: "ovvr558", ProductID: "ovvr558", Title: "Wrong DVD result"},
-		{ContentID: "mdvr00242", ProductID: "mdvr00242", Title: "Correct monthly result"},
-		{ContentID: "mdvr00242", ProductID: "mdvr00242", Title: "Correct digital result"},
+		{ContentID: "ovvr558", ProductID: "ovvr558", ServiceCode: "digital", Title: "Wrong DVD result"},
+		{ContentID: "mdvr00242", ProductID: "mdvr00242", ServiceCode: "monthly", Title: "Monthly result"},
+		{ContentID: "mdvr00242", ProductID: "mdvr00242", ServiceCode: "digital", Title: "Digital result"},
 	}
 
 	item := selectDMMItem("mdvr00242", items)
@@ -50,8 +50,67 @@ func TestSelectDMMItemFiltersMismatchedContentID(t *testing.T) {
 	if item.ContentID != "mdvr00242" {
 		t.Fatalf("expected content_id mdvr00242, got %s", item.ContentID)
 	}
-	if item.Title != "Correct monthly result" {
-		t.Fatalf("expected to keep first matched item, got %q", item.Title)
+	if item.Title != "Digital result" {
+		t.Fatalf("expected digital preferred over monthly, got %q", item.Title)
+	}
+}
+
+func TestSelectDMMItemPrefersDigitalOverMono(t *testing.T) {
+	items := []dmmItem{
+		{ContentID: "sone00408", ProductID: "sone00408", ServiceCode: "mono", Title: "DVD"},
+		{ContentID: "sone00408", ProductID: "sone00408", ServiceCode: "digital", Title: "Digital"},
+		{ContentID: "sone00408", ProductID: "sone00408", ServiceCode: "monthly", Title: "Monthly"},
+		{ContentID: "sone408bod", ProductID: "sone408bod", ServiceCode: "mono", Title: "BOD"},
+	}
+
+	item := selectDMMItem("sone00408", items)
+	if item == nil {
+		t.Fatal("expected a matched item")
+	}
+	if item.Title != "Digital" {
+		t.Fatalf("expected Digital, got %q", item.Title)
+	}
+}
+
+func TestSelectDMMItemFallsBackToMono(t *testing.T) {
+	items := []dmmItem{
+		{ContentID: "abc00123", ProductID: "abc00123", ServiceCode: "mono", Title: "DVD only"},
+	}
+	item := selectDMMItem("abc00123", items)
+	if item == nil || item.Title != "DVD only" {
+		t.Fatalf("expected fallback to mono, got %v", item)
+	}
+}
+
+func TestDMMGuessLargeCover(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"https://pics.dmm.co.jp/digital/video/dass00185/dass00185ps.jpg", "https://pics.dmm.co.jp/digital/video/dass00185/dass00185pl.jpg"},
+		{"https://pics.dmm.co.jp/mono/movie/adult/dass00185/dass00185ps.jpg", "https://pics.dmm.co.jp/mono/movie/adult/dass00185/dass00185pl.jpg"},
+		{"https://example.com/no-pattern.jpg", "https://example.com/no-pattern.jpg"},
+		{"", ""},
+	}
+	for _, tc := range tests {
+		got := dmmGuessLargeCover(tc.in)
+		if got != tc.want {
+			t.Errorf("dmmGuessLargeCover(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestDMMGuessLargeSamples(t *testing.T) {
+	in := []string{
+		"https://pics.dmm.co.jp/digital/video/dass00185/dass00185-1.jpg",
+		"https://pics.dmm.co.jp/digital/video/dass00185/dass00185-10.jpg",
+	}
+	want := []string{
+		"https://pics.dmm.co.jp/digital/video/dass00185/dass00185jp-1.jpg",
+		"https://pics.dmm.co.jp/digital/video/dass00185/dass00185jp-10.jpg",
+	}
+	got := dmmGuessLargeSamples(in)
+	for i := range got {
+		if got[i] != want[i] {
+			t.Errorf("[%d] got %q, want %q", i, got[i], want[i])
+		}
 	}
 }
 

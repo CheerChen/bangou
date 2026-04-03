@@ -1,7 +1,8 @@
-import { useState, useCallback, useEffect, useMemo } from 'react'
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { Link2, RefreshCw, ChevronLeft, ChevronRight, ArrowUpDown, Loader2 } from 'lucide-react'
 import * as api from '../api/client'
+import type { GroupResponse } from '../api/client'
 import { usePolling } from '../api/usePolling'
 import GroupCard from '../components/GroupCard'
 import LibraryCard from '../components/LibraryCard'
@@ -9,6 +10,27 @@ import UnknownCard from '../components/UnknownCard'
 import PipelineInfoBar from '../components/PipelineInfoBar'
 
 const PAGE_SIZE = 12
+
+type PendingSort = 'number' | 'size' | 'date' | 'status'
+
+const STATUS_ORDER: Record<string, number> = {
+  downloading: 0,
+  scraping: 1,
+  failed: 2,
+  ready: 3,
+  linking: 4,
+  merging: 4,
+  error: 5,
+}
+
+function getGroupStatusKey(g: GroupResponse): string {
+  if (g.task === 'linking' || g.task === 'merging') return g.task
+  if (g.task === 'error') return 'error'
+  if (!g.allReady) return 'downloading'
+  if (g.scrape.status === 'scraping') return 'scraping'
+  if (g.scrape.status === 'failed') return 'failed'
+  return 'ready'
+}
 
 export default function PipelineDetail() {
   const { id: idStr } = useParams<{ id: string }>()
@@ -24,8 +46,20 @@ export default function PipelineDetail() {
   const groupsFetcher = useCallback(() => api.listGroups(pipelineId), [pipelineId])
   const { data: groupsPage, loading: groupsLoading, refresh: refreshGroups } = usePolling(groupsFetcher, 3000)
 
-  // Pending pagination (client-side, data already fully loaded)
+  // Auto-scan when Pending tab is activated
+  const lastScanRef = useRef(0)
+  useEffect(() => {
+    if (tab !== 'pending') return
+    const now = Date.now()
+    if (now - lastScanRef.current < 5000) return // debounce 5s
+    lastScanRef.current = now
+    api.triggerScan(pipelineId).catch(() => {})
+  }, [tab, pipelineId])
+
+  // Pending sort + pagination
   const [pendingPage, setPendingPage] = useState(0)
+  const [pendingSort, setPendingSort] = useState<PendingSort>('status')
+  const [pendingSortDir, setPendingSortDir] = useState<'asc' | 'desc'>('asc')
 
   const allPendingItems = useMemo(() => {
     const groups = groupsPage?.groups || []
@@ -33,14 +67,36 @@ export default function PipelineDetail() {
     return { groups, unknowns, total: groups.length + unknowns.length }
   }, [groupsPage])
 
-  const pendingTotalPages = Math.ceil(allPendingItems.total / PAGE_SIZE)
-  const pendingSlice = useMemo(() => {
-    const all = [
-      ...allPendingItems.groups.map((g) => ({ type: 'group' as const, data: g })),
+  const sortedPendingItems = useMemo(() => {
+    const groups = [...allPendingItems.groups].sort((a, b) => {
+      let cmp = 0
+      switch (pendingSort) {
+        case 'number': cmp = a.number.localeCompare(b.number); break
+        case 'size': cmp = a.totalSizeGB - b.totalSizeGB; break
+        case 'date': {
+          const da = a.scrape.meta?.premiered || a.scrape.meta?.year || ''
+          const db = b.scrape.meta?.premiered || b.scrape.meta?.year || ''
+          cmp = da.localeCompare(db)
+          break
+        }
+        case 'status': cmp = (STATUS_ORDER[getGroupStatusKey(a)] ?? 99) - (STATUS_ORDER[getGroupStatusKey(b)] ?? 99); break
+      }
+      return pendingSortDir === 'asc' ? cmp : -cmp
+    })
+    return [
+      ...groups.map((g) => ({ type: 'group' as const, data: g })),
       ...allPendingItems.unknowns.map((u) => ({ type: 'unknown' as const, data: u })),
     ]
-    return all.slice(pendingPage * PAGE_SIZE, (pendingPage + 1) * PAGE_SIZE)
-  }, [allPendingItems, pendingPage])
+  }, [allPendingItems, pendingSort, pendingSortDir])
+
+  const pendingTotalPages = Math.ceil(sortedPendingItems.length / PAGE_SIZE)
+  const pendingSlice = sortedPendingItems.slice(pendingPage * PAGE_SIZE, (pendingPage + 1) * PAGE_SIZE)
+
+  const togglePendingSort = (key: PendingSort) => {
+    if (pendingSort === key) setPendingSortDir(pendingSortDir === 'asc' ? 'desc' : 'asc')
+    else { setPendingSort(key); setPendingSortDir(key === 'status' || key === 'number' ? 'asc' : 'desc') }
+    setPendingPage(0)
+  }
 
   // Library (paginated server-side)
   const [libPage, setLibPage] = useState(0)
@@ -95,6 +151,7 @@ export default function PipelineDetail() {
   }
 
   const handleScan = async () => {
+    lastScanRef.current = Date.now()
     try { await api.triggerScan(pipelineId) } catch { /* */ }
   }
 
@@ -127,6 +184,21 @@ export default function PipelineDetail() {
 
       {tab === 'pending' && (
         <>
+          {allPendingItems.total > 0 && (
+            <div className="flex items-center gap-2 mb-4">
+              <ArrowUpDown size={12} className="text-gray-600" />
+              {(['number', 'size', 'date', 'status'] as PendingSort[]).map((key) => (
+                <button key={key} onClick={() => togglePendingSort(key)}
+                  className={`text-xs px-2.5 py-1 rounded-lg transition-all duration-200 ${pendingSort === key ? 'bg-indigo-600 text-white shadow-sm shadow-indigo-500/20' : 'bg-[#1a1a1a] text-gray-500 hover:text-white border border-gray-800'}`}>
+                  {key}{pendingSort === key && (pendingSortDir === 'desc' ? ' ↓' : ' ↑')}
+                </button>
+              ))}
+              <span className="text-xs text-gray-600 ml-auto">
+                {allPendingItems.total} groups
+              </span>
+            </div>
+          )}
+
           {groupsLoading && allPendingItems.total === 0 ? (
             <div className="flex justify-center py-12"><Loader2 size={24} className="animate-spin text-gray-500" /></div>
           ) : allPendingItems.total > 0 ? (
@@ -138,7 +210,6 @@ export default function PipelineDetail() {
                     : <UnknownCard key={item.data.path} file={item.data} pipelineId={pipelineId} onAction={refreshGroups} />
                 )}
               </div>
-              {/* Pending pagination */}
               {pendingTotalPages > 1 && (
                 <Pagination page={pendingPage} totalPages={pendingTotalPages} onPage={setPendingPage} />
               )}
@@ -163,7 +234,7 @@ export default function PipelineDetail() {
                   {key}{libSort === key && (libSortDir === 'desc' ? ' ↓' : ' ↑')}
                 </button>
               ))}
-              <span className="text-xs text-gray-600 ml-auto">{libData?.total} items</span>
+              <span className="text-xs text-gray-600 ml-auto">{libData?.total} bangous</span>
             </div>
           )}
 
@@ -180,7 +251,6 @@ export default function PipelineDetail() {
             </div>
           )}
 
-          {/* Library pagination */}
           {libData && Math.ceil(libData.total / PAGE_SIZE) > 1 && (
             <Pagination page={libPage} totalPages={Math.ceil(libData.total / PAGE_SIZE)} onPage={setLibPage} />
           )}
@@ -246,8 +316,6 @@ function Pagination({ page, totalPages, onPage }: { page: number; totalPages: nu
   )
 }
 
-// Returns page indices to render, with -1 for ellipsis gaps.
-// Always shows first, last, and up to 2 pages around current.
 function paginationRange(current: number, total: number): number[] {
   if (total <= 7) return Array.from({ length: total }, (_, i) => i)
   const pages: number[] = []

@@ -31,8 +31,9 @@ type MovieMetadata struct {
 	Runtime      string // minutes
 	Rating       string // e.g. "4.00"
 	ReviewCount  int
-	PageURL      string // source page URL
-	ContentID    string // provider internal ID
+	SampleMovieURL string // preview video URL (largest available)
+	PageURL        string // source page URL
+	ContentID      string // provider internal ID
 	Provider     string
 	RawJSON      []byte `json:"-"` // original provider response for debugging
 }

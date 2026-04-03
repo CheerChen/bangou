@@ -91,6 +91,7 @@ export interface ScrapeResponse {
 export interface MetaResponse {
   number: string
   title: string
+  director?: string
   maker?: string
   label?: string
   series?: string
@@ -103,6 +104,7 @@ export interface MetaResponse {
   runtime?: string
   rating?: string
   reviewCount: number
+  sampleMovieURL?: string
   pageURL?: string
   provider?: string
 }
@@ -193,6 +195,10 @@ export interface BangouResponse {
   reviewCount: number
   pageURL?: string
   maker?: string
+  label?: string
+  series?: string
+  director?: string
+  sampleMovieURL?: string
   premiered?: string
   year?: string
   runtime?: string

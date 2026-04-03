@@ -78,8 +78,9 @@ type Metadata struct {
 	Runtime      string
 	Rating       string
 	ReviewCount  int
-	PageURL      string
-	ContentID    string
+	SampleMovieURL string
+	PageURL        string
+	ContentID      string
 	Provider     string
 	CreatedAt    time.Time
 	UpdatedAt    time.Time

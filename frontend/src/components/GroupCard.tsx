@@ -1,8 +1,9 @@
 import { useState, useRef } from 'react'
-import { ExternalLink, RefreshCw, Merge, Link2, FileVideo, Check, Download, HelpCircle, ChevronDown, ChevronUp, AlertTriangle, Tag, Layers, Loader2 } from 'lucide-react'
+import { ExternalLink, RefreshCw, Merge, Link2, FileVideo, Check, Download, HelpCircle, ChevronDown, ChevronUp, AlertTriangle, Tag, Layers, Loader2, Calendar, Users, Play } from 'lucide-react'
 import * as api from '../api/client'
 import type { GroupResponse } from '../api/client'
 import { useLightbox, type LightboxItem } from './Lightbox'
+import TagList from './TagList'
 
 interface Props {
   group: GroupResponse
@@ -34,17 +35,24 @@ export default function GroupCard({ group, pipelineId, onAction }: Props) {
   const isFailed = group.scrape.status === 'failed'
   const isUnknownLike = isFailed || !meta
 
-  const galleryItems: LightboxItem[] = meta?.coverURL
-    ? [
-        {
-          src: meta.coverURL,
-          width: imgRef.current?.naturalWidth || undefined,
-          height: imgRef.current?.naturalHeight || undefined,
-          msrc: imgRef.current?.currentSrc || undefined,
-        },
-        ...(meta.sampleImages || []).filter(Boolean).map((src) => ({ src })),
-      ]
-    : []
+  const hasVideo = !!meta?.sampleMovieURL
+  const galleryItems: LightboxItem[] = []
+  if (meta?.sampleMovieURL) {
+    galleryItems.push({ src: meta.sampleMovieURL, type: 'video', width: 720, height: 480 })
+  }
+  if (meta?.coverURL) {
+    galleryItems.push({
+      src: meta.coverURL,
+      width: imgRef.current?.naturalWidth || undefined,
+      height: imgRef.current?.naturalHeight || undefined,
+      msrc: imgRef.current?.currentSrc || undefined,
+    })
+  }
+  if (meta?.sampleImages) {
+    for (const src of meta.sampleImages) {
+      if (src) galleryItems.push({ src })
+    }
+  }
 
   const handleLink = async () => {
     const paths = [...selected]
@@ -85,7 +93,14 @@ export default function GroupCard({ group, pipelineId, onAction }: Props) {
               <ExternalLink size={14} />
             </a>
           )}
-          {(() => { const count = 1 + (meta.sampleImages?.length || 0); return count > 1 ? (
+          {hasVideo && (
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <div className="w-12 h-12 rounded-full bg-black/60 flex items-center justify-center group-hover/cover:bg-black/80 transition">
+                <Play size={20} className="text-white ml-0.5" fill="currentColor" />
+              </div>
+            </div>
+          )}
+          {(() => { const count = (meta.coverURL ? 1 : 0) + (meta.sampleImages?.length || 0); return count > 1 ? (
             <span className="absolute top-2 left-2 flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-amber-500/80 text-xs font-bold text-white">
               <Layers size={11} />{count}
             </span>
@@ -116,14 +131,10 @@ export default function GroupCard({ group, pipelineId, onAction }: Props) {
           <>
             <div className="text-sm text-gray-300 line-clamp-2">{meta.title}</div>
             <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
-              {meta.maker && <><dt className="text-gray-600">Info</dt><dd className="text-gray-400">{meta.maker} / {meta.premiered || meta.year} / {meta.runtime}min</dd></>}
-              {meta.actors && meta.actors.length > 0 && <><dt className="text-gray-600">Actors</dt><dd className="text-gray-400">{meta.actors.join(', ')}</dd></>}
+              {(meta.premiered || meta.year || meta.runtime) && <><dt className="text-gray-600"><Calendar size={11} /></dt><dd className="text-gray-400">{[meta.premiered || meta.year, meta.runtime && `${meta.runtime}min`].filter(Boolean).join(' / ')}</dd></>}
+              {meta.actors && meta.actors.length > 0 && <><dt className="text-gray-600"><Users size={11} /></dt><dd className="text-gray-400">{meta.actors.join(', ')}</dd></>}
             </dl>
-            {meta.genres && meta.genres.length > 0 && (
-              <div className="flex flex-wrap gap-1">
-                {meta.genres.map((g) => <span key={g} className="text-[11px] px-1.5 py-0.5 bg-gray-800 text-gray-400 rounded">{g}</span>)}
-              </div>
-            )}
+            <TagList genres={meta.genres} maker={meta.maker} label={meta.label} series={meta.series} director={meta.director} />
           </>
         )}
 

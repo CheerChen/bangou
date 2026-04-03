@@ -75,6 +75,7 @@ CREATE TABLE IF NOT EXISTS metadata (
     runtime      TEXT NOT NULL DEFAULT '',
     rating       TEXT NOT NULL DEFAULT '',
     review_count INTEGER NOT NULL DEFAULT 0,
+    sample_movie_url TEXT NOT NULL DEFAULT '',
     page_url     TEXT NOT NULL DEFAULT '',
     content_id   TEXT NOT NULL DEFAULT '',
     provider     TEXT NOT NULL DEFAULT '',
