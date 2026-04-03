@@ -21,6 +21,7 @@ type Store interface {
 	UpdateBangouPaths(ctx context.Context, id int64, nfoPath, coverPath, rawPath string) error
 	DeleteBangou(ctx context.Context, id int64) error
 	ListBangousByPipeline(ctx context.Context, pipelineID int64, limit, offset int, sort, order string) ([]Bangou, int, error)
+	ListAllBangous(ctx context.Context) ([]Bangou, error)
 	IsBangouCommitted(ctx context.Context, pipelineID int64, number string) (bool, error)
 
 	// Bangou files

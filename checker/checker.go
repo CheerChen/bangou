@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/CheerChen/bangou/committed"
@@ -29,6 +30,7 @@ func detectActualLinkType(path string) string {
 func Run(ctx context.Context, s committed.Store, interval time.Duration) {
 	fixBangouFileRecords(ctx, s)
 	backfillMediaInfo(ctx, s)
+	backfillBangouPaths(ctx, s)
 
 	t := time.NewTicker(interval)
 	defer t.Stop()
@@ -143,5 +145,71 @@ func backfillMediaInfo(ctx context.Context, s committed.Store) {
 	}
 	if filled > 0 {
 		log.Printf("checker: backfilled media info for %d files", filled)
+	}
+}
+
+// backfillBangouPaths scans out_dir for existing nfo/cover/raw files
+// and records their paths on bangous that are missing them.
+func backfillBangouPaths(ctx context.Context, s committed.Store) {
+	bangous, err := s.ListAllBangous(ctx)
+	if err != nil {
+		log.Printf("checker backfill paths: %v", err)
+		return
+	}
+	filled := 0
+	for _, b := range bangous {
+		if b.OutDir == "" {
+			continue
+		}
+		// Skip if all paths already populated
+		if b.NFOPath != "" && b.CoverPath != "" && b.RawPath != "" {
+			continue
+		}
+
+		nfoPath := b.NFOPath
+		coverPath := b.CoverPath
+		rawPath := b.RawPath
+
+		if nfoPath == "" {
+			p := filepath.Join(b.OutDir, b.Number+".nfo")
+			if _, err := os.Stat(p); err == nil {
+				nfoPath = p
+			}
+		}
+
+		if coverPath == "" {
+			for _, ext := range []string{".jpg", ".png", ".webp", ".gif"} {
+				p := filepath.Join(b.OutDir, b.Number+ext)
+				if _, err := os.Stat(p); err == nil {
+					coverPath = p
+					break
+				}
+			}
+		}
+
+		if rawPath == "" {
+			for _, provider := range []string{"avwiki", "dmm"} {
+				p := filepath.Join(b.OutDir, b.Number+"-raw."+provider)
+				if _, err := os.Stat(p); err == nil {
+					rawPath = p
+					break
+				}
+			}
+		}
+
+		// Only update if we found something new
+		if nfoPath == b.NFOPath && coverPath == b.CoverPath && rawPath == b.RawPath {
+			continue
+		}
+		if err := s.UpdateBangouPaths(ctx, b.ID, nfoPath, coverPath, rawPath); err != nil {
+			log.Printf("checker backfill paths %s: %v", b.Number, err)
+			continue
+		}
+		log.Printf("checker: backfilled %s paths nfo=%v cover=%v raw=%v",
+			b.Number, nfoPath != "", coverPath != "", rawPath != "")
+		filled++
+	}
+	if filled > 0 {
+		log.Printf("checker: backfilled artifact paths for %d bangous", filled)
 	}
 }
