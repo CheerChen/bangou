@@ -19,11 +19,11 @@ func (f fakeProvider) Scrape(ctx context.Context, p Predict) (*MovieMetadata, er
 	return f.meta, f.err
 }
 
-func TestChain(t *testing.T) {
-	res := Chain(context.Background(), []Provider{
+func TestScrapeAll(t *testing.T) {
+	res := ScrapeAll(context.Background(), []Provider{
 		fakeProvider{name: "a", err: errors.New("failed")},
 		fakeProvider{name: "b", meta: &MovieMetadata{Number: "ABC-001", Title: "ok"}},
-	}, Predict{Number: "ABC-001"})
+	}, Predict{Number: "ABC-001"}, nil)
 	if res.Meta == nil {
 		t.Fatal("expected metadata")
 	}
@@ -32,6 +32,30 @@ func TestChain(t *testing.T) {
 	}
 	if res.Errors["a"] == "" {
 		t.Fatal("expected error for provider a")
+	}
+}
+
+func TestScrapeAllMerge(t *testing.T) {
+	var phase1 *ScrapeResult
+	res := ScrapeAll(context.Background(), []Provider{
+		fakeProvider{name: "dmm", meta: &MovieMetadata{Number: "ABC-001", Title: "dmm title", Premiered: "2026-01-01"}},
+		fakeProvider{name: "avwiki", meta: &MovieMetadata{Number: "ABC-001", Title: "avwiki title", Actors: []string{"A"}, Premiered: "2025-12-25"}},
+	}, Predict{Number: "ABC-001"}, func(first *ScrapeResult) {
+		phase1 = first
+	})
+	if phase1 == nil || phase1.Meta == nil {
+		t.Fatal("expected phase1 callback")
+	}
+	if res.Meta == nil {
+		t.Fatal("expected final metadata")
+	}
+	// Rule 1: actors filled (dmm has none, avwiki has)
+	if len(res.Meta.Actors) != 1 || res.Meta.Actors[0] != "A" {
+		t.Fatalf("actors = %v", res.Meta.Actors)
+	}
+	// Rule 2: avwiki date preferred over dmm date
+	if res.Meta.Premiered != "2025-12-25" {
+		t.Fatalf("premiered = %s, want 2025-12-25", res.Meta.Premiered)
 	}
 }
 

@@ -9,14 +9,11 @@ interface Props {
   group: GroupResponse
   pipelineId: number
   onAction: () => void
+  selected: Set<string>
+  onSelectionChange: (selected: Set<string>) => void
 }
 
-export default function GroupCard({ group, pipelineId, onAction }: Props) {
-  const [selected, setSelected] = useState<Set<string>>(() => {
-    const s = new Set<string>()
-    group.items.forEach((i) => { if (i.ready) s.add(i.path) })
-    return s
-  })
+export default function GroupCard({ group, pipelineId, onAction, selected, onSelectionChange }: Props) {
   const [errorsOpen, setErrorsOpen] = useState(false)
   const [tagInput, setTagInput] = useState('')
   const [actionError, setActionError] = useState<string | null>(null)
@@ -125,7 +122,12 @@ export default function GroupCard({ group, pipelineId, onAction }: Props) {
       )}
 
       <div className="p-4 space-y-3 flex-1 flex flex-col">
-        {group.task === 'error' && group.taskErr && <div className="text-xs text-red-400">{group.taskErr}</div>}
+        {group.task === 'error' && group.taskErr && (
+          <details className="text-xs text-red-400">
+            <summary className="cursor-pointer hover:text-red-300 transition truncate">{group.taskErr}</summary>
+            <pre className="mt-1 p-2 bg-[#111] rounded-lg whitespace-pre-wrap break-all text-gray-500 max-h-40 overflow-auto">{group.taskErr}</pre>
+          </details>
+        )}
 
         {group.scrape.status === 'success' && meta && (
           <>
@@ -175,7 +177,7 @@ export default function GroupCard({ group, pipelineId, onAction }: Props) {
                 />
               )}
               <input type="checkbox" checked={selected.has(item.path)} disabled={!item.ready}
-                onChange={(e) => { const next = new Set(selected); e.target.checked ? next.add(item.path) : next.delete(item.path); setSelected(next) }}
+                onChange={(e) => { const next = new Set(selected); e.target.checked ? next.add(item.path) : next.delete(item.path); onSelectionChange(next) }}
                 className="relative z-10 rounded border-gray-700 bg-transparent text-indigo-500 focus:ring-indigo-500" />
               <FileVideo size={12} className="relative z-10 text-gray-600 shrink-0" />
               <span className="relative z-10 flex-1 text-gray-400 truncate">

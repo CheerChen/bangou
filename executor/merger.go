@@ -42,7 +42,12 @@ func MergeFiles(parts []string, output string, totalSize int64, onProgress func(
 	err := cmd.Wait()
 	close(done)
 	if err != nil {
-		return fmt.Errorf("mkvmerge failed: %w\n%s", err, outputLog.String())
+		// mkvmerge exit codes: 0 = success, 1 = warnings (ok), 2 = error
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+			// warnings only, merge succeeded
+		} else {
+			return fmt.Errorf("mkvmerge failed: %w\n%s", err, outputLog.String())
+		}
 	}
 	if onProgress != nil {
 		onProgress(100)

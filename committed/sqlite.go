@@ -23,6 +23,10 @@ func NewSQLite(dsn string) (*SQLiteStore, error) {
 		db.Close()
 		return nil, err
 	}
+	if _, err := db.Exec(`PRAGMA busy_timeout=5000`); err != nil {
+		db.Close()
+		return nil, err
+	}
 	if _, err := db.Exec(`PRAGMA foreign_keys=ON`); err != nil {
 		db.Close()
 		return nil, err
