@@ -118,30 +118,65 @@ export default function PipelineDetail() {
     if (tab === 'library') fetchLibrary()
   }, [tab, fetchLibrary])
 
-  // Link All
-  const [laStatus, setLaStatus] = useState<api.LinkAllStatus | null>(null)
-  const linkableCount = groupsPage?.linkable || 0
+  // Per-group selection state
+  const [selections, setSelections] = useState<Map<string, Set<string>>>(new Map())
+
+  useEffect(() => {
+    if (!groupsPage) return
+    setSelections(prev => {
+      const next = new Map(prev)
+      const currentNumbers = new Set(groupsPage.groups.map(g => g.number))
+      for (const key of next.keys()) {
+        if (!currentNumbers.has(key)) next.delete(key)
+      }
+      for (const g of groupsPage.groups) {
+        if (!next.has(g.number)) {
+          next.set(g.number, new Set(g.items.filter(i => i.ready).map(i => i.path)))
+        }
+      }
+      return next
+    })
+  }, [groupsPage])
+
+  const handleSelectionChange = useCallback((number: string, selected: Set<string>) => {
+    setSelections(prev => {
+      const next = new Map(prev)
+      next.set(number, selected)
+      return next
+    })
+  }, [])
+
+  // Link All (frontend-driven, current page only)
+  const linkableGroups = useMemo(() => {
+    return pendingSlice
+      .filter((item): item is { type: 'group'; data: GroupResponse } => item.type === 'group')
+      .filter(item => isGroupLinkEligible(item.data, selections.get(item.data.number) ?? new Set()))
+  }, [pendingSlice, selections])
+
+  const linkableCount = linkableGroups.length
+
+  const [laProgress, setLaProgress] = useState<{ total: number; done: number; current: string; running: boolean } | null>(null)
 
   const handleLinkAll = async () => {
-    try {
-      const s = await api.linkAll(pipelineId)
-      setLaStatus(s)
-      pollLinkAll()
-    } catch (e: any) { alert(e.message) }
-  }
+    const groups = linkableGroups.map(item => ({
+      number: item.data.number,
+      paths: [...(selections.get(item.data.number) ?? new Set())],
+    }))
+    if (groups.length === 0) return
 
-  const pollLinkAll = () => {
-    const timer = setInterval(async () => {
+    setLaProgress({ total: groups.length, done: 0, current: '', running: true })
+
+    for (let i = 0; i < groups.length; i++) {
+      const { number, paths } = groups[i]
+      setLaProgress({ total: groups.length, done: i, current: number, running: true })
       try {
-        const s = await api.linkAllProgress(pipelineId)
-        setLaStatus(s)
-        if (!s.running) {
-          clearInterval(timer)
-          refreshGroups()
-          setTimeout(() => setLaStatus(null), 3000)
-        }
-      } catch { clearInterval(timer) }
-    }, 1000)
+        await api.groupLink(pipelineId, number, paths)
+      } catch { /* continue */ }
+    }
+
+    setLaProgress({ total: groups.length, done: groups.length, current: '', running: false })
+    refreshGroups()
+    setTimeout(() => setLaProgress(null), 3000)
   }
 
   const toggleSort = (key: string) => {
@@ -206,7 +241,9 @@ export default function PipelineDetail() {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {pendingSlice.map((item) =>
                   item.type === 'group'
-                    ? <GroupCard key={item.data.number} group={item.data} pipelineId={pipelineId} onAction={refreshGroups} />
+                    ? <GroupCard key={item.data.number} group={item.data} pipelineId={pipelineId} onAction={refreshGroups}
+                        selected={selections.get(item.data.number) ?? new Set()}
+                        onSelectionChange={(sel) => handleSelectionChange(item.data.number, sel)} />
                     : <UnknownCard key={item.data.path} file={item.data} pipelineId={pipelineId} onAction={refreshGroups} />
                 )}
               </div>
@@ -259,19 +296,19 @@ export default function PipelineDetail() {
 
       {/* FABs */}
       <div className="fixed bottom-6 right-6 flex flex-col gap-3 z-40">
-        {tab === 'pending' && linkableCount > 0 && (
-          laStatus ? (
+        {tab === 'pending' && (linkableCount > 0 || laProgress) && (
+          laProgress ? (
             <div className="bg-[#1a1a1a] border border-gray-700 rounded-2xl px-4 py-3 shadow-2xl min-w-[180px]">
-              {laStatus.running ? (
+              {laProgress.running ? (
                 <div className="space-y-2">
-                  <div className="text-xs text-gray-400">Linking {laStatus.done + 1}/{laStatus.total}</div>
+                  <div className="text-xs text-gray-400">Linking {laProgress.done + 1}/{laProgress.total}</div>
                   <div className="w-full h-1.5 bg-gray-800 rounded-full overflow-hidden">
                     <div className="h-full bg-indigo-500 transition-all duration-500 rounded-full"
-                      style={{ width: `${(laStatus.done / laStatus.total) * 100}%` }} />
+                      style={{ width: `${(laProgress.done / laProgress.total) * 100}%` }} />
                   </div>
                 </div>
               ) : (
-                <div className="text-xs text-emerald-400">Linked {laStatus.done} groups ✓</div>
+                <div className="text-xs text-emerald-400">Linked {laProgress.done} groups ✓</div>
               )}
             </div>
           ) : (
@@ -314,6 +351,20 @@ function Pagination({ page, totalPages, onPage }: { page: number; totalPages: nu
         className="p-2 text-gray-500 hover:text-white disabled:opacity-20 transition"><ChevronRight size={16} /></button>
     </div>
   )
+}
+
+function isGroupLinkEligible(g: GroupResponse, selected: Set<string>): boolean {
+  if (g.scrape.status !== 'success' || g.task || g.items.length === 0 || !g.allReady) return false
+  if (selected.size === 0) return false
+  const exts = new Set<string>()
+  for (const item of g.items) {
+    if (!selected.has(item.path)) continue
+    const idx = (item.filename || item.path).lastIndexOf('.')
+    if (idx < 0) return false
+    exts.add((item.filename || item.path).slice(idx).toLowerCase())
+    if (exts.size > 1) return false
+  }
+  return exts.size === 1
 }
 
 function paginationRange(current: number, total: number): number[] {

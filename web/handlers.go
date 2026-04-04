@@ -20,18 +20,6 @@ type Handlers struct {
 	store    committed.Store
 
 	libRescrape sync.Map // number -> *LibRescrapeResult
-
-	// per-pipeline link-all state
-	linkAllMu sync.Mutex
-	linkAll   map[int64]*LinkAllStatus
-}
-
-type LinkAllStatus struct {
-	Total   int      `json:"total"`
-	Done    int      `json:"done"`
-	Current string   `json:"current"`
-	Errors  []string `json:"errors,omitempty"`
-	Running bool     `json:"running"`
 }
 
 type LibRescrapeResult struct {
@@ -227,7 +215,6 @@ type UnknownResponse struct {
 type GroupsPageResponse struct {
 	Groups   []GroupResponse   `json:"groups"`
 	Unknowns []UnknownResponse `json:"unknowns"`
-	Linkable int               `json:"linkable"`
 }
 
 func (h *Handlers) ListGroups(w http.ResponseWriter, r *http.Request) {
@@ -240,20 +227,15 @@ func (h *Handlers) ListGroups(w http.ResponseWriter, r *http.Request) {
 	unknowns := rt.Manager.ListUnknowns()
 
 	grs := make([]GroupResponse, 0, len(groups))
-	linkable := 0
 	for _, g := range groups {
-		gr := buildGroupResponse(g)
-		if isGroupLinkEligible(g) {
-			linkable++
-		}
-		grs = append(grs, gr)
+		grs = append(grs, buildGroupResponse(g))
 	}
 
 	urs := make([]UnknownResponse, 0, len(unknowns))
 	for _, u := range unknowns {
 		urs = append(urs, UnknownResponse{Path: u.Path, Filename: u.Filename, SizeGB: float64(u.Size) / (1024 * 1024 * 1024)})
 	}
-	writeOK(w, GroupsPageResponse{Groups: grs, Unknowns: urs, Linkable: linkable})
+	writeOK(w, GroupsPageResponse{Groups: grs, Unknowns: urs})
 }
 
 func buildGroupResponse(g staging.StagingGroup) GroupResponse {
@@ -317,13 +299,13 @@ func (h *Handlers) GroupLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rt.Manager.SetTask(number, "linking", "")
-	go func() {
-		if err := rt.Executor.Link(context.Background(), number, req.Paths, rt.LinkOpts()); err != nil {
-			log.Printf("[link] %s: error: %v", number, err)
-			rt.Manager.SetTask(number, "error", err.Error())
-		}
-	}()
-	writeOK(w, map[string]string{"status": "linking"})
+	if err := rt.Executor.Link(r.Context(), number, req.Paths, rt.LinkOpts()); err != nil {
+		log.Printf("[link] %s: error: %v", number, err)
+		rt.Manager.SetTask(number, "error", err.Error())
+		writeError(w, 500, err.Error())
+		return
+	}
+	writeOK(w, map[string]string{"status": "linked"})
 }
 
 func (h *Handlers) GroupMerge(w http.ResponseWriter, r *http.Request) {
@@ -349,8 +331,13 @@ func (h *Handlers) GroupMerge(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "merge is disabled for mixed mkv/mp4 groups")
 		return
 	}
+	if !rt.mergeMu.TryLock() {
+		writeError(w, 409, "another merge is already running")
+		return
+	}
 	rt.Manager.SetTask(number, "merging", "")
 	go func() {
+		defer rt.mergeMu.Unlock()
 		if err := rt.Executor.Merge(context.Background(), number, req.Paths); err != nil {
 			log.Printf("[merge] %s: error: %v", number, err)
 			rt.Manager.SetTask(number, "error", err.Error())
@@ -426,92 +413,6 @@ func (h *Handlers) TriggerScan(w http.ResponseWriter, r *http.Request) {
 	}
 	go rt.Scan(context.Background(), h.store)
 	writeOK(w, map[string]string{"status": "scanning"})
-}
-
-func (h *Handlers) LinkAll(w http.ResponseWriter, r *http.Request) {
-	rt, pipeID, err := h.getRuntime(r)
-	if err != nil {
-		writeError(w, 404, err.Error())
-		return
-	}
-
-	h.linkAllMu.Lock()
-	if h.linkAll == nil {
-		h.linkAll = make(map[int64]*LinkAllStatus)
-	}
-	if s := h.linkAll[pipeID]; s != nil && s.Running {
-		h.linkAllMu.Unlock()
-		writeOK(w, s)
-		return
-	}
-
-	groups := rt.Manager.ListGroups()
-	var eligible []string
-	for _, g := range groups {
-		if isGroupLinkEligible(g) {
-			eligible = append(eligible, g.Number)
-		}
-	}
-	if len(eligible) == 0 {
-		h.linkAllMu.Unlock()
-		writeError(w, 400, "no eligible groups")
-		return
-	}
-
-	status := &LinkAllStatus{Total: len(eligible), Running: true}
-	h.linkAll[pipeID] = status
-	h.linkAllMu.Unlock()
-
-	go func() {
-		for i, number := range eligible {
-			h.linkAllMu.Lock()
-			status.Done = i
-			status.Current = number
-			h.linkAllMu.Unlock()
-
-			group := rt.Manager.GetGroup(number)
-			if group == nil {
-				continue
-			}
-			var paths []string
-			for _, item := range group.Items {
-				if item.File.Ready {
-					paths = append(paths, item.File.Path)
-				}
-			}
-			rt.Manager.SetTask(number, "linking", "")
-			if err := rt.Executor.Link(context.Background(), number, paths, rt.LinkOpts()); err != nil {
-				log.Printf("[link-all] %s: error: %v", number, err)
-				rt.Manager.SetTask(number, "error", err.Error())
-				h.linkAllMu.Lock()
-				status.Errors = append(status.Errors, fmt.Sprintf("%s: %s", number, err.Error()))
-				h.linkAllMu.Unlock()
-			}
-		}
-		h.linkAllMu.Lock()
-		status.Done = len(eligible)
-		status.Current = ""
-		status.Running = false
-		h.linkAllMu.Unlock()
-	}()
-
-	writeOK(w, status)
-}
-
-func (h *Handlers) LinkAllProgress(w http.ResponseWriter, r *http.Request) {
-	_, pipeID, err := h.getRuntime(r)
-	if err != nil {
-		writeError(w, 404, err.Error())
-		return
-	}
-	h.linkAllMu.Lock()
-	s := h.linkAll[pipeID]
-	h.linkAllMu.Unlock()
-	if s == nil {
-		writeOK(w, map[string]any{"running": false})
-		return
-	}
-	writeOK(w, s)
 }
 
 // ── Library ──
@@ -732,6 +633,7 @@ func (h *Handlers) UnlinkBangou(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	rt.Manager.RemoveGroup(bangou.Number)
 	go rt.Scan(context.Background(), h.store)
 	writeOK(w, map[string]string{"status": "unlinked"})
 }
@@ -847,16 +749,3 @@ func hasMixedMKVAndMP4Group(items []staging.StagedItem) bool {
 	return false
 }
 
-func isGroupLinkEligible(g staging.StagingGroup) bool {
-	if g.Scrape.Status != "success" || g.Task != "" || len(g.Items) == 0 {
-		return false
-	}
-	paths := make([]string, 0, len(g.Items))
-	for _, item := range g.Items {
-		if !item.File.Ready {
-			return false
-		}
-		paths = append(paths, item.File.Path)
-	}
-	return validateSingleExtensionPaths(paths) == nil
-}

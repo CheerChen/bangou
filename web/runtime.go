@@ -26,6 +26,8 @@ type PipelineRuntime struct {
 	scrapeQueue chan scrapeJob
 	mu          sync.Mutex
 	inFlight    map[string]bool
+	scanMu      sync.Mutex // guards concurrent scan calls
+	mergeMu     sync.Mutex // guards concurrent merge operations
 	cancel      context.CancelFunc
 }
 
@@ -92,8 +94,10 @@ func (reg *Registry) StartPipeline(p committed.Pipeline) error {
 		rt.enqueue(number, false)
 	}
 
-	// Scrape worker
-	go rt.scrapeWorker(ctx, reg.store)
+	// Scrape workers
+	for range 5 {
+		go rt.scrapeWorker(ctx, reg.store)
+	}
 
 	// Initial scan
 	go rt.scan(ctx, reg.store)
@@ -165,6 +169,12 @@ func (rt *PipelineRuntime) Scan(ctx context.Context, store committed.Store) {
 }
 
 func (rt *PipelineRuntime) scan(ctx context.Context, store committed.Store) {
+	if !rt.scanMu.TryLock() {
+		log.Printf("[pipeline:%s] scan already running, skip", rt.Pipeline.Name)
+		return
+	}
+	defer rt.scanMu.Unlock()
+
 	inputDir := rt.Pipeline.InputDir
 	if inputDir == "" {
 		return
@@ -248,10 +258,16 @@ func (rt *PipelineRuntime) processScrapeJob(ctx context.Context, store committed
 		return
 	}
 	predict := provider.Predict{Number: number, RawNumber: rt.Manager.GetRawNumber(number)}
-	result := provider.Chain(scrapeCtx, providers, predict)
+	onFirst := func(first *provider.ScrapeResult) {
+		if first.Meta != nil {
+			rt.Manager.SetScrapeResult(number, staging.ScrapeResult{Meta: first.Meta, Errors: first.Errors, Status: "success"})
+			log.Printf("[pipeline:%s] scrape phase1: %s -> %s (%s)", rt.Pipeline.Name, number, first.Meta.Title, first.Meta.Provider)
+		}
+	}
+	result := provider.ScrapeAll(scrapeCtx, providers, predict, onFirst)
 	if result.Meta != nil {
 		rt.Manager.SetScrapeResult(number, staging.ScrapeResult{Meta: result.Meta, Errors: result.Errors, Status: "success"})
-		log.Printf("[pipeline:%s] scrape success: %s -> %s (%s)", rt.Pipeline.Name, number, result.Meta.Title, result.Meta.Provider)
+		log.Printf("[pipeline:%s] scrape done: %s -> %s (%s)", rt.Pipeline.Name, number, result.Meta.Title, result.Meta.Provider)
 		return
 	}
 	rt.Manager.SetScrapeResult(number, staging.ScrapeResult{Meta: nil, Errors: result.Errors, Status: "failed"})
@@ -292,7 +308,7 @@ func (rt *PipelineRuntime) LibScrapeFn(ctx context.Context, store committed.Stor
 	if len(providers) == 0 {
 		return nil, map[string]string{"system": "no provider configured"}
 	}
-	result := provider.Chain(scrapeCtx, providers, provider.Predict{Number: number})
+	result := provider.ScrapeAll(scrapeCtx, providers, provider.Predict{Number: number}, nil)
 	return result.Meta, result.Errors
 }
 

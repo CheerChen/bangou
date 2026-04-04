@@ -17,7 +17,8 @@ type ParsedFile struct {
 }
 
 var (
-	sitePrefixRe = regexp.MustCompile(`^([a-zA-Z0-9.-]+)@`)
+	bracketSiteRe = regexp.MustCompile(`^\[([a-zA-Z0-9.-]+)\]`)
+	sitePrefixRe  = regexp.MustCompile(`^([a-zA-Z0-9.-]+)@`)
 	tokenizeRe   = regexp.MustCompile(`[^a-zA-Z0-9]+`)
 	partTokenRe  = regexp.MustCompile(`(?i)^part(\d+)$`)
 	tagTokenRe   = regexp.MustCompile(`(?i)^(8k|4k|vr)$`)
@@ -33,8 +34,11 @@ func Parse(filename string) ParsedFile {
 
 	res := ParsedFile{Ext: ext}
 
-	// 1. Extract site prefix
-	if m := sitePrefixRe.FindStringSubmatch(name); len(m) > 1 {
+	// 1. Extract site prefix: [site.com] or site.com@
+	if m := bracketSiteRe.FindStringSubmatch(name); len(m) > 1 {
+		res.SourceSite = strings.ToLower(m[1])
+		name = name[len(m[0]):]
+	} else if m := sitePrefixRe.FindStringSubmatch(name); len(m) > 1 {
 		res.SourceSite = strings.ToLower(m[1])
 		name = sitePrefixRe.ReplaceAllString(name, "")
 	}
@@ -88,6 +92,11 @@ func Parse(filename string) ParsedFile {
 
 		if tagTokenRe.MatchString(t) {
 			res.Tags = append(res.Tags, strings.ToLower(t))
+			continue
+		}
+
+		if len(t) == 1 && hasLetter(t) && res.Part == 0 {
+			res.Part = int(strings.ToUpper(t)[0]-'A') + 1
 			continue
 		}
 

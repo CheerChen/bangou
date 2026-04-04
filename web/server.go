@@ -20,9 +20,6 @@ func NewServer(reg *Registry, store committed.Store) http.Handler {
 	mux.HandleFunc("GET /api/pipelines/{id}/groups", h.ListGroups)
 	mux.HandleFunc("GET /api/pipelines/{id}/library", h.ListLibrary)
 	mux.HandleFunc("POST /api/pipelines/{id}/scan", h.TriggerScan)
-	mux.HandleFunc("POST /api/pipelines/{id}/link-all", h.LinkAll)
-	mux.HandleFunc("GET /api/pipelines/{id}/link-all/progress", h.LinkAllProgress)
-
 	// Group actions
 	mux.HandleFunc("POST /api/pipelines/{id}/groups/{number}/link", h.GroupLink)
 	mux.HandleFunc("POST /api/pipelines/{id}/groups/{number}/merge", h.GroupMerge)

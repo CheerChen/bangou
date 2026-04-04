@@ -53,7 +53,6 @@ export const deletePipeline = (id: number) => request<unknown>('DELETE', `/pipel
 export interface GroupsPage {
   groups: GroupResponse[]
   unknowns: UnknownResponse[]
-  linkable: number
 }
 
 export interface GroupResponse {
@@ -137,24 +136,10 @@ export const groupTag = (pipelineId: number, number: string, path: string) =>
 export const unknownTag = (pipelineId: number, path: string, number: string) =>
   request<unknown>('POST', `/pipelines/${pipelineId}/unknowns/tag`, { path, number })
 
-// ── Scan / Link All ──
+// ── Scan ──
 
 export const triggerScan = (pipelineId: number) =>
   request<unknown>('POST', `/pipelines/${pipelineId}/scan`, {})
-
-export interface LinkAllStatus {
-  total: number
-  done: number
-  current: string
-  errors?: string[]
-  running: boolean
-}
-
-export const linkAll = (pipelineId: number) =>
-  request<LinkAllStatus>('POST', `/pipelines/${pipelineId}/link-all`, {})
-
-export const linkAllProgress = (pipelineId: number) =>
-  request<LinkAllStatus>('GET', `/pipelines/${pipelineId}/link-all/progress`)
 
 // ── Library ──
 
