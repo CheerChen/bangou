@@ -17,8 +17,8 @@ type Pipeline struct {
 }
 
 type ProviderConfig struct {
-	Provider string
-	Config   string // JSON blob
+	Provider string `json:"provider"`
+	Config   string `json:"config"`
 }
 
 // Bangou is the aggregate root — one video number within one pipeline.

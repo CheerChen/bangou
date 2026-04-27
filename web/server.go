@@ -40,6 +40,9 @@ func NewServer(reg *Registry, store committed.Store) http.Handler {
 	mux.HandleFunc("PUT /api/provider-configs/{provider}", h.SetProviderConfig)
 	mux.HandleFunc("POST /api/provider-configs/{provider}/test", h.TestProviderConfig)
 
+	// Directory browse
+	mux.HandleFunc("GET /api/browse", h.BrowseDirectory)
+
 	return mux
 }
 

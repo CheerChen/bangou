@@ -56,10 +56,10 @@ func Parse(filename string) ParsedFile {
 		return res
 	}
 
-	// 3. Build identifier from leading tokens
+	// 3. Build identifier from leading tokens (skip single-letter tokens like "h")
 	idStart := -1
 	for i, t := range clean {
-		if hasLetter(t) {
+		if hasLetter(t) && len(t) > 1 {
 			idStart = i
 			break
 		}
