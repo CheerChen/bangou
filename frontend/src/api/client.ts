@@ -221,3 +221,14 @@ export const setProviderConfig = (provider: string, config: Record<string, strin
 
 export const testProviderConfig = (provider: string) =>
   request<{ status: string }>('POST', `/provider-configs/${provider}/test`, {})
+
+// ── Directory Browse ──
+
+export interface BrowseEntry {
+  name: string
+  path: string
+  isDir: boolean
+}
+
+export const browseDirectory = (path: string) =>
+  request<BrowseEntry[]>('GET', `/browse?path=${encodeURIComponent(path)}`)

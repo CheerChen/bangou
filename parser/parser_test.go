@@ -84,6 +84,16 @@ func TestParse(t *testing.T) {
 			want:     ParsedFile{Number: "SIVR-102", RawNumber: "sivr00102", Part: 2, Ext: ".mp4", SourceSite: "fbfb.me"},
 		},
 		{
+			name:     "h_ prefix with numeric content ID",
+			filename: "h_386acrn00119.mkv",
+			want:     ParsedFile{Number: "386ACRN-119", RawNumber: "386acrn00119", Part: 0, Ext: ".mkv"},
+		},
+		{
+			name:     "h_ prefix with numeric content ID 2",
+			filename: "h_454dplt09676.mkv",
+			want:     ParsedFile{Number: "454DPLT-9676", RawNumber: "454dplt09676", Part: 0, Ext: ".mkv"},
+		},
+		{
 			name:     "unrecognizable",
 			filename: "random_video_2025.mp4",
 			want:     ParsedFile{Ext: ".mp4"},

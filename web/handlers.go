@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -726,6 +727,38 @@ func validateSingleExtensionPaths(paths []string) error {
 		}
 	}
 	return nil
+}
+
+// ── Browse Directory ──
+
+type BrowseEntry struct {
+	Name  string `json:"name"`
+	Path  string `json:"path"`
+	IsDir bool   `json:"isDir"`
+}
+
+func (h *Handlers) BrowseDirectory(w http.ResponseWriter, r *http.Request) {
+	dir := r.URL.Query().Get("path")
+	if dir == "" {
+		dir = "/"
+	}
+	dir = filepath.Clean(dir)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	dirs := make([]BrowseEntry, 0)
+	for _, e := range entries {
+		if e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
+			dirs = append(dirs, BrowseEntry{
+				Name:  e.Name(),
+				Path:  filepath.Join(dir, e.Name()),
+				IsDir: true,
+			})
+		}
+	}
+	writeOK(w, dirs)
 }
 
 func hasMixedMKVAndMP4Group(items []staging.StagedItem) bool {

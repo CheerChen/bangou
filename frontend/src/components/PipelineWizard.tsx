@@ -1,13 +1,14 @@
 import { useState } from 'react'
-import { ChevronLeft, ChevronRight, FolderOpen, Check, Settings2, CheckCircle, AlertCircle, Loader2, Download, Search, Archive, Merge, Link2 } from 'lucide-react'
-import Modal from './Modal'
-import * as api from '../api/client'
+import { ChevronLeft, ChevronRight, FolderOpen, Check, CheckCircle, AlertCircle, Download, Search, Archive, Merge, Link2 } from 'lucide-react'
+import DirectoryBrowser from './DirectoryBrowser'
 
 const availableScrapers = ['avwiki', 'dmm']
 
 interface WizardProps {
   onComplete: (data: WizardData) => void
   onCancel: () => void
+  dmmConfigured: boolean
+  aria2Configured: boolean
 }
 
 export interface WizardData {
@@ -23,22 +24,16 @@ export interface WizardData {
 
 const STEPS = ['Sources', 'Processing', 'Output', 'Confirm']
 
-export default function PipelineWizard({ onComplete, onCancel }: WizardProps) {
+export default function PipelineWizard({ onComplete, onCancel, dmmConfigured, aria2Configured }: WizardProps) {
   const [step, setStep] = useState(0)
 
   // Step 0: Sources
   const [name, setName] = useState('')
   const [inputDir, setInputDir] = useState('')
   const [downloadProvider, setDownloadProvider] = useState('none')
-  const [showAria2Settings, setShowAria2Settings] = useState(false)
-  const [aria2Url, setAria2Url] = useState('http://localhost:6800/jsonrpc')
-  const [aria2Token, setAria2Token] = useState('')
-  const [aria2Test, setAria2Test] = useState<'idle' | 'testing' | 'ok' | 'fail'>('idle')
-  const [scrapers, setScrapers] = useState<string[]>(['avwiki', 'dmm'])
-  const [showDmmSettings, setShowDmmSettings] = useState(false)
-  const [dmmApiId, setDmmApiId] = useState('')
-  const [dmmAffId, setDmmAffId] = useState('')
-  const [dmmTest, setDmmTest] = useState<'idle' | 'testing' | 'ok' | 'fail'>('idle')
+  const [scrapers, setScrapers] = useState<string[]>(
+    dmmConfigured ? ['avwiki', 'dmm'] : ['avwiki']
+  )
 
   // Step 1: Processing
   const [enableArchive, setEnableArchive] = useState(false)
@@ -49,6 +44,9 @@ export default function PipelineWizard({ onComplete, onCancel }: WizardProps) {
   // Step 2: Output
   const [outputDir, setOutputDir] = useState('')
   const [pathPattern, setPathPattern] = useState('{Year}/{Number}')
+
+  // Directory browser
+  const [browseTarget, setBrowseTarget] = useState<'input' | 'archive' | 'output' | null>(null)
 
   const canNext = () => {
     if (step === 0) return name.trim() !== '' && inputDir.trim() !== ''
@@ -65,6 +63,7 @@ export default function PipelineWizard({ onComplete, onCancel }: WizardProps) {
   }
 
   const toggleScraper = (s: string) => {
+    if (s === 'dmm' && !dmmConfigured) return
     if (scrapers.includes(s)) {
       if (scrapers.length > 1) setScrapers(scrapers.filter((x) => x !== s))
     } else {
@@ -72,25 +71,22 @@ export default function PipelineWizard({ onComplete, onCancel }: WizardProps) {
     }
   }
 
-  const testAria2 = async () => {
-    setAria2Test('testing')
-    try {
-      await api.setProviderConfig('aria2', { rpc_url: aria2Url, token: aria2Token })
-      await api.testProviderConfig('aria2')
-      setAria2Test('ok')
-    } catch { setAria2Test('fail') }
-  }
-  const testDmm = async () => {
-    setDmmTest('testing')
-    try {
-      await api.setProviderConfig('dmm', { api_id: dmmApiId, affiliate_id: dmmAffId })
-      await api.testProviderConfig('dmm')
-      setDmmTest('ok')
-    } catch { setDmmTest('fail') }
-  }
-
   const handleFinish = () => {
     onComplete({ name, inputDir, outputDir, pathPattern, archiveDir: enableArchive ? archiveDir : '', enableMerge, scrapers, downloadProvider })
+  }
+
+  const handleBrowseSelect = (path: string) => {
+    if (browseTarget === 'input') setInputDir(path)
+    else if (browseTarget === 'archive') setArchiveDir(path)
+    else if (browseTarget === 'output') setOutputDir(path)
+    setBrowseTarget(null)
+  }
+
+  const getBrowseInitialPath = () => {
+    if (browseTarget === 'input' && inputDir) return inputDir
+    if (browseTarget === 'archive' && archiveDir) return archiveDir
+    if (browseTarget === 'output' && outputDir) return outputDir
+    return '/'
   }
 
   return (
@@ -126,7 +122,8 @@ export default function PipelineWizard({ onComplete, onCancel }: WizardProps) {
             <div className="flex gap-2">
               <input type="text" value={inputDir} onChange={(e) => setInputDir(e.target.value)} placeholder="/download/VR"
                 className="flex-1 px-3 py-2 bg-[#111] border border-gray-700 rounded-lg text-white text-sm focus:border-indigo-500 focus:outline-none" />
-              <button type="button" className="px-3 py-2 border border-gray-700 text-gray-400 hover:text-white rounded-lg transition">
+              <button type="button" onClick={() => setBrowseTarget('input')}
+                className="px-3 py-2 border border-gray-700 text-gray-400 hover:text-white rounded-lg transition">
                 <FolderOpen size={16} />
               </button>
             </div>
@@ -144,19 +141,22 @@ export default function PipelineWizard({ onComplete, onCancel }: WizardProps) {
                   <span className="text-xs text-gray-600 ml-2">Files are placed in scan directory manually</span>
                 </div>
               </label>
-              <label className="flex items-center gap-3 bg-[#111] border border-gray-800 rounded-lg px-3 py-2.5 cursor-pointer hover:border-gray-700 transition">
-                <input type="radio" name="dl" value="aria2" checked={downloadProvider === 'aria2'} onChange={() => setDownloadProvider('aria2')}
+              <label className={`flex items-center gap-3 bg-[#111] border border-gray-800 rounded-lg px-3 py-2.5 transition ${
+                aria2Configured ? 'cursor-pointer hover:border-gray-700' : 'opacity-40 cursor-not-allowed'
+              }`}>
+                <input type="radio" name="dl" value="aria2"
+                  checked={downloadProvider === 'aria2'}
+                  onChange={() => aria2Configured && setDownloadProvider('aria2')}
+                  disabled={!aria2Configured}
                   className="text-indigo-500 focus:ring-indigo-500" />
                 <div className="flex-1">
                   <span className="text-sm text-white">aria2</span>
                   <span className="text-xs text-gray-600 ml-2">Monitor download progress via RPC</span>
                 </div>
-                {downloadProvider === 'aria2' && (
-                  <button type="button" onClick={(e) => { e.preventDefault(); setShowAria2Settings(true) }}
-                    className="p-1.5 text-gray-500 hover:text-white rounded-lg transition">
-                    <Settings2 size={14} />
-                  </button>
-                )}
+                {aria2Configured
+                  ? <span title="Configured" className="text-emerald-400"><CheckCircle size={14} /></span>
+                  : <span title="Not configured" className="text-amber-500"><AlertCircle size={14} /></span>
+                }
               </label>
             </div>
           </div>
@@ -170,25 +170,31 @@ export default function PipelineWizard({ onComplete, onCancel }: WizardProps) {
                   <span className="text-xs text-gray-600 w-4">{i + 1}.</span>
                   <span className="flex-1 text-sm text-white">{s}</span>
                   {s === 'dmm' && (
-                    <button type="button" onClick={() => setShowDmmSettings(true)}
-                      className="p-1.5 text-gray-500 hover:text-white rounded-lg transition">
-                      <Settings2 size={14} />
-                    </button>
+                    dmmConfigured
+                      ? <span title="Configured" className="text-emerald-400"><CheckCircle size={14} /></span>
+                      : <span title="Not configured" className="text-amber-500"><AlertCircle size={14} /></span>
                   )}
                   <button type="button" onClick={() => moveScraper(i, -1)} disabled={i === 0}
-                    className="text-gray-600 hover:text-white disabled:opacity-20 text-xs p-1">↑</button>
+                    className="text-gray-600 hover:text-white disabled:opacity-20 text-xs p-1">&#x2191;</button>
                   <button type="button" onClick={() => moveScraper(i, 1)} disabled={i === scrapers.length - 1}
-                    className="text-gray-600 hover:text-white disabled:opacity-20 text-xs p-1">↓</button>
+                    className="text-gray-600 hover:text-white disabled:opacity-20 text-xs p-1">&#x2193;</button>
                   <button type="button" onClick={() => toggleScraper(s)}
-                    className="text-gray-600 hover:text-red-400 text-xs p-1">×</button>
+                    className="text-gray-600 hover:text-red-400 text-xs p-1">&#x00D7;</button>
                 </div>
               ))}
-              {availableScrapers.filter((s) => !scrapers.includes(s)).map((s) => (
-                <button key={s} type="button" onClick={() => toggleScraper(s)}
-                  className="text-xs px-3 py-1.5 border border-dashed border-gray-700 text-gray-500 hover:text-white rounded-lg transition">
-                  + {s}
-                </button>
-              ))}
+              {availableScrapers.filter((s) => !scrapers.includes(s)).map((s) => {
+                const disabled = s === 'dmm' && !dmmConfigured
+                return (
+                  <button key={s} type="button" onClick={() => toggleScraper(s)} disabled={disabled}
+                    className={`text-xs px-3 py-1.5 border border-dashed rounded-lg transition ${
+                      disabled
+                        ? 'border-gray-800 text-gray-700 cursor-not-allowed'
+                        : 'border-gray-700 text-gray-500 hover:text-white'
+                    }`}>
+                    + {s}{disabled && ' (not configured)'}
+                  </button>
+                )
+              })}
             </div>
           </div>
         </div>
@@ -215,7 +221,8 @@ export default function PipelineWizard({ onComplete, onCancel }: WizardProps) {
               <div className="mt-3 flex gap-2">
                 <input type="text" value={archiveDir} onChange={(e) => setArchiveDir(e.target.value)} placeholder="/archive/VR"
                   className="flex-1 px-3 py-2 bg-[#0f0f0f] border border-gray-700 rounded-lg text-white text-sm focus:border-indigo-500 focus:outline-none" />
-                <button type="button" className="px-3 py-2 border border-gray-700 text-gray-400 hover:text-white rounded-lg transition">
+                <button type="button" onClick={() => setBrowseTarget('archive')}
+                  className="px-3 py-2 border border-gray-700 text-gray-400 hover:text-white rounded-lg transition">
                   <FolderOpen size={16} />
                 </button>
               </div>
@@ -256,7 +263,8 @@ export default function PipelineWizard({ onComplete, onCancel }: WizardProps) {
             <div className="flex gap-2">
               <input type="text" value={outputDir} onChange={(e) => setOutputDir(e.target.value)} placeholder="/media/VR"
                 className="flex-1 px-3 py-2 bg-[#111] border border-gray-700 rounded-lg text-white text-sm focus:border-indigo-500 focus:outline-none" />
-              <button type="button" className="px-3 py-2 border border-gray-700 text-gray-400 hover:text-white rounded-lg transition">
+              <button type="button" onClick={() => setBrowseTarget('output')}
+                className="px-3 py-2 border border-gray-700 text-gray-400 hover:text-white rounded-lg transition">
                 <FolderOpen size={16} />
               </button>
             </div>
@@ -277,7 +285,7 @@ export default function PipelineWizard({ onComplete, onCancel }: WizardProps) {
           <div className="flex justify-between"><span className="text-gray-500">Name</span><span className="text-white">{name}</span></div>
           <div className="flex justify-between"><span className="text-gray-500">Scan</span><code className="text-gray-300">{inputDir}</code></div>
           <div className="flex justify-between"><span className="text-gray-500">Download</span><span className="text-gray-300">{downloadProvider === 'none' ? 'Manual' : 'aria2'}</span></div>
-          <div className="flex justify-between"><span className="text-gray-500">Scrapers</span><span className="text-gray-300">{scrapers.join(' → ')}</span></div>
+          <div className="flex justify-between"><span className="text-gray-500">Scrapers</span><span className="text-gray-300">{scrapers.join(' \u2192 ')}</span></div>
           <div className="border-t border-gray-800 my-1" />
           <div className="flex justify-between"><span className="text-gray-500">Archive</span><span className={enableArchive ? 'text-gray-300' : 'text-gray-600'}>{enableArchive ? archiveDir : 'Off'}</span></div>
           <div className="flex justify-between"><span className="text-gray-500">Merge</span><span className={enableMerge ? 'text-emerald-400' : 'text-gray-600'}>{enableMerge ? 'Enabled' : 'Off'}</span></div>
@@ -306,57 +314,13 @@ export default function PipelineWizard({ onComplete, onCancel }: WizardProps) {
         )}
       </div>
 
-      {/* aria2 Settings Modal */}
-      <Modal open={showAria2Settings} onClose={() => setShowAria2Settings(false)} title="aria2 Settings">
-        <div className="space-y-3">
-          <div>
-            <label className="block text-xs text-gray-500 mb-1">RPC URL</label>
-            <input type="text" value={aria2Url} onChange={(e) => setAria2Url(e.target.value)}
-              className="w-full px-3 py-2 bg-[#111] border border-gray-700 rounded-lg text-white text-sm focus:border-indigo-500 focus:outline-none" />
-          </div>
-          <div>
-            <label className="block text-xs text-gray-500 mb-1">Secret Token</label>
-            <input type="password" value={aria2Token} onChange={(e) => setAria2Token(e.target.value)} placeholder="aria2 secret"
-              className="w-full px-3 py-2 bg-[#111] border border-gray-700 rounded-lg text-white text-sm focus:border-indigo-500 focus:outline-none" />
-          </div>
-          <div className="flex items-center gap-2">
-            <button onClick={testAria2} className="flex items-center gap-1.5 text-xs px-3 py-1.5 border border-gray-700 text-gray-400 hover:text-white rounded-lg transition">
-              {aria2Test === 'testing' && <Loader2 size={12} className="animate-spin" />}Test
-            </button>
-            {aria2Test === 'ok' && <span className="flex items-center gap-1 text-xs text-emerald-400"><CheckCircle size={12} />OK</span>}
-            {aria2Test === 'fail' && <span className="flex items-center gap-1 text-xs text-red-400"><AlertCircle size={12} />Failed</span>}
-          </div>
-          <div className="pt-3 border-t border-gray-800">
-            <button onClick={() => setShowAria2Settings(false)} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm rounded-lg transition">Done</button>
-          </div>
-        </div>
-      </Modal>
-
-      {/* DMM Settings Modal */}
-      <Modal open={showDmmSettings} onClose={() => setShowDmmSettings(false)} title="DMM API Settings">
-        <div className="space-y-3">
-          <div>
-            <label className="block text-xs text-gray-500 mb-1">API ID</label>
-            <input type="text" value={dmmApiId} onChange={(e) => setDmmApiId(e.target.value)} placeholder="Your DMM API ID"
-              className="w-full px-3 py-2 bg-[#111] border border-gray-700 rounded-lg text-white text-sm focus:border-indigo-500 focus:outline-none" />
-          </div>
-          <div>
-            <label className="block text-xs text-gray-500 mb-1">Affiliate ID</label>
-            <input type="password" value={dmmAffId} onChange={(e) => setDmmAffId(e.target.value)} placeholder="Your Affiliate ID"
-              className="w-full px-3 py-2 bg-[#111] border border-gray-700 rounded-lg text-white text-sm focus:border-indigo-500 focus:outline-none" />
-          </div>
-          <div className="flex items-center gap-2">
-            <button onClick={testDmm} className="flex items-center gap-1.5 text-xs px-3 py-1.5 border border-gray-700 text-gray-400 hover:text-white rounded-lg transition">
-              {dmmTest === 'testing' && <Loader2 size={12} className="animate-spin" />}Test
-            </button>
-            {dmmTest === 'ok' && <span className="flex items-center gap-1 text-xs text-emerald-400"><CheckCircle size={12} />OK</span>}
-            {dmmTest === 'fail' && <span className="flex items-center gap-1 text-xs text-red-400"><AlertCircle size={12} />Failed</span>}
-          </div>
-          <div className="pt-3 border-t border-gray-800">
-            <button onClick={() => setShowDmmSettings(false)} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm rounded-lg transition">Done</button>
-          </div>
-        </div>
-      </Modal>
+      {/* Directory Browser */}
+      <DirectoryBrowser
+        open={browseTarget !== null}
+        onClose={() => setBrowseTarget(null)}
+        onSelect={handleBrowseSelect}
+        initialPath={getBrowseInitialPath()}
+      />
     </div>
   )
 }
