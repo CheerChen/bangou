@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { ExternalLink, RefreshCw, Unlink, CheckCircle, AlertCircle, Layers, FileVideo, Link as LinkIcon, FileText, Image, Loader2, ChevronRight, Calendar, Users, Play } from 'lucide-react'
+import { ExternalLink, RefreshCw, Unlink, CheckCircle, AlertCircle, Layers, FileVideo, Link as LinkIcon, FileText, Image, Loader2, ChevronRight, Calendar, Users, Play, RotateCcw } from 'lucide-react'
 import * as api from '../api/client'
 import type { BangouResponse, BangouFileResponse } from '../api/client'
 import { useLightbox, type LightboxItem } from './Lightbox'
@@ -15,11 +15,17 @@ export default function LibraryCard({ item, onAction }: Props) {
   const lightbox = useLightbox()
   const imgRef = useRef<HTMLImageElement>(null)
   const [showUnlinkConfirm, setShowUnlinkConfirm] = useState(false)
+  const [showBackConfirm, setShowBackConfirm] = useState(false)
   const [unlinking, setUnlinking] = useState(false)
+  const [restoring, setRestoring] = useState(false)
+  const [backingToPending, setBackingToPending] = useState(false)
   const [rescraping, setRescraping] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const outputs = item.outputs || []
   const allAlive = outputs.length > 0 && outputs.every((o) => o.alive)
+  const missingOutputs = outputs.filter((o) => !o.alive)
+  const hasMissing = missingOutputs.length > 0
+  const canRestore = hasMissing && missingOutputs.every((o) => o.sourceAvailable)
 
   const handleRescrape = async () => {
     setRescraping(true)
@@ -40,6 +46,26 @@ export default function LibraryCard({ item, onAction }: Props) {
       onAction()
     } catch (e: any) { setError(e.message) }
     setUnlinking(false)
+  }
+  const handleRestore = async () => {
+    if (!canRestore) return
+    setRestoring(true)
+    setError(null)
+    try {
+      await api.restoreBangou(item.id)
+      onAction()
+    } catch (e: any) { setError(e.message) }
+    setRestoring(false)
+  }
+  const handleBackConfirm = async () => {
+    setBackingToPending(true)
+    setError(null)
+    try {
+      await api.backToPendingBangou(item.id)
+      setShowBackConfirm(false)
+      onAction()
+    } catch (e: any) { setError(e.message) }
+    setBackingToPending(false)
   }
   const hasVideo = !!item.sampleMovieURL
   const galleryItems: LightboxItem[] = []
@@ -100,7 +126,7 @@ export default function LibraryCard({ item, onAction }: Props) {
             </div>
             {allAlive
               ? <span className="text-xs px-2 py-0.5 bg-emerald-500/20 text-emerald-400 rounded flex items-center gap-1"><CheckCircle size={10} />alive</span>
-              : <span className="text-xs px-2 py-0.5 bg-red-500/20 text-red-400 rounded flex items-center gap-1"><AlertCircle size={10} />missing</span>}
+              : <span className="text-xs px-2 py-0.5 bg-red-500/20 text-red-400 rounded flex items-center gap-1"><AlertCircle size={10} />link missing</span>}
           </div>
         </div>
       )}
@@ -111,6 +137,12 @@ export default function LibraryCard({ item, onAction }: Props) {
           {item.actors && <><dt className="text-gray-600"><Users size={11} /></dt><dd className="text-gray-400">{item.actors}</dd></>}
         </dl>
         <TagList genres={item.genres} maker={item.maker} label={item.label} series={item.series} director={item.director} />
+
+        {hasMissing && (
+          <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+            Linked file was deleted from the library. Source file is {canRestore ? 'still available.' : 'not available for every missing link.'}
+          </div>
+        )}
 
         {/* File tree */}
         <details className="rounded-lg border border-gray-800 bg-[#111] overflow-hidden group/tree">
@@ -185,10 +217,24 @@ export default function LibraryCard({ item, onAction }: Props) {
             {rescraping ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
             Rescrape
           </button>
-          <button onClick={handleUnlink}
-            className="flex items-center gap-1 text-xs px-2.5 py-1.5 text-gray-500 hover:text-amber-400 hover:bg-[#222] rounded-lg transition">
-            <Unlink size={12} />Unlink
-          </button>
+          {hasMissing ? (
+            <>
+              <button onClick={handleRestore} disabled={!canRestore || restoring}
+                className="flex items-center gap-1 text-xs px-2.5 py-1.5 text-gray-500 hover:text-emerald-400 hover:bg-[#222] rounded-lg transition disabled:opacity-40 disabled:hover:text-gray-500">
+                {restoring ? <Loader2 size={12} className="animate-spin" /> : <LinkIcon size={12} />}
+                Restore Link
+              </button>
+              <button onClick={() => setShowBackConfirm(true)} disabled={backingToPending}
+                className="flex items-center gap-1 text-xs px-2.5 py-1.5 text-gray-500 hover:text-amber-400 hover:bg-[#222] rounded-lg transition disabled:opacity-50">
+                <RotateCcw size={12} />Back to Pending
+              </button>
+            </>
+          ) : (
+            <button onClick={handleUnlink}
+              className="flex items-center gap-1 text-xs px-2.5 py-1.5 text-gray-500 hover:text-amber-400 hover:bg-[#222] rounded-lg transition">
+              <Unlink size={12} />Unlink
+            </button>
+          )}
         </div>
       </div>
 
@@ -224,6 +270,38 @@ export default function LibraryCard({ item, onAction }: Props) {
           </div>
         </div>
       </Modal>
+
+      <Modal open={showBackConfirm} onClose={() => !backingToPending && setShowBackConfirm(false)} title={`Back ${item.number} to Pending`}>
+        <div className="space-y-4">
+          <p className="text-sm text-gray-400">
+            This removes the library record only. Source files stay in the input directory and will appear in Pending after scan.
+          </p>
+          <div className="rounded-lg border border-gray-800 bg-[#111] max-h-64 overflow-y-auto">
+            {outputs.map((output) => (
+              <div key={output.id} className="flex items-center gap-2 border-b border-gray-800 last:border-b-0 px-3 py-2">
+                <span className="rounded bg-gray-800 px-1.5 py-0.5 text-[11px] text-gray-400">{output.alive ? 'Link' : 'Missing'}</span>
+                <code className="min-w-0 flex-1 truncate text-xs text-gray-500">{output.linkPath}</code>
+              </div>
+            ))}
+          </div>
+          <div className="flex items-center justify-end gap-2">
+            <button
+              onClick={() => setShowBackConfirm(false)}
+              disabled={backingToPending}
+              className="px-3 py-1.5 rounded-lg border border-gray-700 text-xs text-gray-400 hover:text-white hover:bg-[#222] disabled:opacity-50 transition"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleBackConfirm}
+              disabled={backingToPending}
+              className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-xs text-white disabled:opacity-50 transition"
+            >
+              {backingToPending ? 'Moving...' : 'Back to Pending'}
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
   )
 }
@@ -245,9 +323,13 @@ function LinkRow({ output, nested }: { output: BangouFileResponse; nested?: bool
   return (
     <div className="flex items-center gap-2 px-3 py-1.5 hover:bg-[#161616] transition">
       <TreeLine nested={nested} />
-      <LinkIcon size={12} className="text-gray-600 shrink-0" />
+      {output.alive
+        ? <LinkIcon size={12} className="text-gray-600 shrink-0" />
+        : <AlertCircle size={12} className="text-red-400 shrink-0" />}
       <span className="text-[11px] text-gray-300 truncate">{getFilename(output.linkPath)}</span>
-      <span className="px-1 py-0.5 bg-indigo-500/10 text-indigo-400 rounded text-[11px] ml-auto shrink-0">{output.linkType}</span>
+      <span className={`px-1 py-0.5 rounded text-[11px] ml-auto shrink-0 ${output.alive ? 'bg-indigo-500/10 text-indigo-400' : 'bg-red-500/10 text-red-400'}`}>
+        {output.alive ? output.linkType : 'missing'}
+      </span>
     </div>
   )
 }
@@ -291,4 +373,3 @@ function buildUnlinkTargets(bangou: BangouResponse, outputs: BangouResponse['out
   if (bangou.rawPath) out.push({ kind: 'Raw', path: bangou.rawPath })
   return out
 }
-

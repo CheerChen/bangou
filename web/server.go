@@ -33,6 +33,8 @@ func NewServer(reg *Registry, store committed.Store) http.Handler {
 	mux.HandleFunc("POST /api/library/{number}/rescrape", h.LibraryRescrape)
 	mux.HandleFunc("POST /api/library/{number}/apply", h.LibraryRescrapeApply)
 	mux.HandleFunc("POST /api/library/{number}/dismiss", h.LibraryRescrapeDismiss)
+	mux.HandleFunc("POST /api/bangous/{id}/restore", h.RestoreBangou)
+	mux.HandleFunc("POST /api/bangous/{id}/back-to-pending", h.BackToPendingBangou)
 	mux.HandleFunc("POST /api/bangous/{id}/unlink", h.UnlinkBangou)
 
 	// Provider configs

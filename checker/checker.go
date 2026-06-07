@@ -29,6 +29,7 @@ func detectActualLinkType(path string) string {
 
 func Run(ctx context.Context, s committed.Store, interval time.Duration) {
 	fixBangouFileRecords(ctx, s)
+	CheckAll(ctx, s)
 	backfillMediaInfo(ctx, s)
 	backfillBangouPaths(ctx, s)
 
@@ -40,12 +41,12 @@ func Run(ctx context.Context, s committed.Store, interval time.Duration) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			check(ctx, s)
+			CheckAll(ctx, s)
 		}
 	}
 }
 
-func check(ctx context.Context, s committed.Store) {
+func CheckAll(ctx context.Context, s committed.Store) {
 	files, err := s.ListAllBangouFiles(ctx)
 	if err != nil {
 		log.Printf("checker list files: %v", err)

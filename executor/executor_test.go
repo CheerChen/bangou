@@ -301,6 +301,54 @@ func TestUnlinkKeepsBangouWhenFilesRemain(t *testing.T) {
 	}
 }
 
+func TestRestoreLinkRecreatesMissingBangouFile(t *testing.T) {
+	ctx := context.Background()
+	store, err := committed.NewSQLite(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	outputDir := t.TempDir()
+	pid, _ := store.CreatePipeline(ctx, &committed.Pipeline{
+		Name: "VR", InputDir: t.TempDir(), OutputDir: outputDir,
+	})
+
+	srcDir := t.TempDir()
+	srcPath := filepath.Join(srcDir, "ACHJ-057.mp4")
+	if err := os.WriteFile(srcPath, []byte("source"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	linkDir := filepath.Join(outputDir, "ACHJ-057")
+	linkPath := filepath.Join(linkDir, "ACHJ-057.mp4")
+	bid, _ := store.CreateBangou(ctx, &committed.Bangou{
+		PipelineID: pid, Number: "ACHJ-057", OutDir: linkDir,
+	})
+	if err := store.CreateBangouFile(ctx, &committed.BangouFile{
+		BangouID: bid, SrcPath: srcPath, LinkPath: linkPath, LinkType: "hardlink",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	files, _ := store.ListBangouFilesByBangou(ctx, bid)
+	if err := store.SetBangouFileAlive(ctx, files[0].ID, false); err != nil {
+		t.Fatal(err)
+	}
+	files, _ = store.ListBangouFilesByBangou(ctx, bid)
+
+	exec := New(store, staging.New(), outputDir)
+	if err := exec.RestoreLink(ctx, &files[0]); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	if data, err := os.ReadFile(linkPath); err != nil || string(data) != "source" {
+		t.Fatalf("restored link data=%q err=%v", data, err)
+	}
+	files, _ = store.ListBangouFilesByBangou(ctx, bid)
+	if !files[0].Alive {
+		t.Fatal("expected restored file marked alive")
+	}
+}
+
 func TestUnlinkCleansUpArtifacts(t *testing.T) {
 	ctx := context.Background()
 	store, err := committed.NewSQLite(":memory:")

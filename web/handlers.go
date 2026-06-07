@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/CheerChen/bangou/checker"
 	"github.com/CheerChen/bangou/committed"
 	"github.com/CheerChen/bangou/provider"
 	"github.com/CheerChen/bangou/staging"
@@ -187,24 +188,24 @@ type ScrapeResponse struct {
 }
 
 type MetaResponse struct {
-	Number       string   `json:"number"`
-	Title        string   `json:"title"`
-	Director     string   `json:"director,omitempty"`
-	Maker        string   `json:"maker,omitempty"`
-	Label        string   `json:"label,omitempty"`
-	Series       string   `json:"series,omitempty"`
-	Actors       []string `json:"actors,omitempty"`
-	Genres       []string `json:"genres,omitempty"`
-	CoverURL     string   `json:"coverURL,omitempty"`
-	SampleImages []string `json:"sampleImages,omitempty"`
-	Premiered    string   `json:"premiered,omitempty"`
-	Year         string   `json:"year,omitempty"`
-	Runtime      string   `json:"runtime,omitempty"`
-	Rating       string   `json:"rating,omitempty"`
-	ReviewCount  int      `json:"reviewCount"`
-	SampleMovieURL string `json:"sampleMovieURL,omitempty"`
-	PageURL        string `json:"pageURL,omitempty"`
-	Provider       string `json:"provider,omitempty"`
+	Number         string   `json:"number"`
+	Title          string   `json:"title"`
+	Director       string   `json:"director,omitempty"`
+	Maker          string   `json:"maker,omitempty"`
+	Label          string   `json:"label,omitempty"`
+	Series         string   `json:"series,omitempty"`
+	Actors         []string `json:"actors,omitempty"`
+	Genres         []string `json:"genres,omitempty"`
+	CoverURL       string   `json:"coverURL,omitempty"`
+	SampleImages   []string `json:"sampleImages,omitempty"`
+	Premiered      string   `json:"premiered,omitempty"`
+	Year           string   `json:"year,omitempty"`
+	Runtime        string   `json:"runtime,omitempty"`
+	Rating         string   `json:"rating,omitempty"`
+	ReviewCount    int      `json:"reviewCount"`
+	SampleMovieURL string   `json:"sampleMovieURL,omitempty"`
+	PageURL        string   `json:"pageURL,omitempty"`
+	Provider       string   `json:"provider,omitempty"`
 }
 
 type UnknownResponse struct {
@@ -419,43 +420,44 @@ func (h *Handlers) TriggerScan(w http.ResponseWriter, r *http.Request) {
 // ── Library ──
 
 type LibraryFileResponse struct {
-	ID         int64  `json:"id"`
-	SrcPath    string `json:"srcPath"`
-	LinkPath   string `json:"linkPath"`
-	LinkType   string `json:"linkType"`
-	FileSize   int64  `json:"fileSize"`
-	Resolution string `json:"resolution,omitempty"`
-	VideoCodec string `json:"videoCodec,omitempty"`
-	AudioCodec string `json:"audioCodec,omitempty"`
-	Duration   string `json:"duration,omitempty"`
-	Bitrate    string `json:"bitrate,omitempty"`
-	Alive      bool   `json:"alive"`
+	ID              int64  `json:"id"`
+	SrcPath         string `json:"srcPath"`
+	LinkPath        string `json:"linkPath"`
+	LinkType        string `json:"linkType"`
+	FileSize        int64  `json:"fileSize"`
+	Resolution      string `json:"resolution,omitempty"`
+	VideoCodec      string `json:"videoCodec,omitempty"`
+	AudioCodec      string `json:"audioCodec,omitempty"`
+	Duration        string `json:"duration,omitempty"`
+	Bitrate         string `json:"bitrate,omitempty"`
+	Alive           bool   `json:"alive"`
+	SourceAvailable bool   `json:"sourceAvailable"`
 }
 
 type LibraryBangouResponse struct {
-	ID           int64                 `json:"id"`
-	Number       string                `json:"number"`
-	Files        []LibraryFileResponse `json:"outputs"` // JSON key kept as "outputs" for frontend compat
-	NFOPath      string                `json:"nfoPath,omitempty"`
-	CoverPath    string                `json:"coverPath,omitempty"`
-	RawPath      string                `json:"rawPath,omitempty"`
-	Title        string                `json:"title,omitempty"`
-	Actors       string                `json:"actors,omitempty"`
-	Genres       []string              `json:"genres,omitempty"`
-	CoverURL     string                `json:"coverURL,omitempty"`
-	SampleImages []string              `json:"sampleImages,omitempty"`
-	Rating       string                `json:"rating,omitempty"`
-	ReviewCount  int                   `json:"reviewCount"`
-	PageURL      string                `json:"pageURL,omitempty"`
-	Maker        string                `json:"maker,omitempty"`
-	Label        string                `json:"label,omitempty"`
-	Series       string                `json:"series,omitempty"`
+	ID             int64                 `json:"id"`
+	Number         string                `json:"number"`
+	Files          []LibraryFileResponse `json:"outputs"` // JSON key kept as "outputs" for frontend compat
+	NFOPath        string                `json:"nfoPath,omitempty"`
+	CoverPath      string                `json:"coverPath,omitempty"`
+	RawPath        string                `json:"rawPath,omitempty"`
+	Title          string                `json:"title,omitempty"`
+	Actors         string                `json:"actors,omitempty"`
+	Genres         []string              `json:"genres,omitempty"`
+	CoverURL       string                `json:"coverURL,omitempty"`
+	SampleImages   []string              `json:"sampleImages,omitempty"`
+	Rating         string                `json:"rating,omitempty"`
+	ReviewCount    int                   `json:"reviewCount"`
+	PageURL        string                `json:"pageURL,omitempty"`
+	Maker          string                `json:"maker,omitempty"`
+	Label          string                `json:"label,omitempty"`
+	Series         string                `json:"series,omitempty"`
 	Director       string                `json:"director,omitempty"`
 	SampleMovieURL string                `json:"sampleMovieURL,omitempty"`
 	Premiered      string                `json:"premiered,omitempty"`
-	Year         string                `json:"year,omitempty"`
-	Runtime      string                `json:"runtime,omitempty"`
-	Provider     string                `json:"provider,omitempty"`
+	Year           string                `json:"year,omitempty"`
+	Runtime        string                `json:"runtime,omitempty"`
+	Provider       string                `json:"provider,omitempty"`
 }
 
 type LibraryPageResponse struct {
@@ -472,6 +474,8 @@ func (h *Handlers) ListLibrary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+	checker.CheckAll(ctx, h.store)
+
 	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
 	size, _ := strconv.Atoi(r.URL.Query().Get("size"))
 	if size <= 0 || size > 100 {
@@ -496,11 +500,17 @@ func (h *Handlers) ListLibrary(w http.ResponseWriter, r *http.Request) {
 		files, _ := h.store.ListBangouFilesByBangou(ctx, b.ID)
 		lv.Files = make([]LibraryFileResponse, 0, len(files))
 		for _, f := range files {
+			sourceAvailable := false
+			if f.SrcPath != "" {
+				if _, err := os.Stat(f.SrcPath); err == nil {
+					sourceAvailable = true
+				}
+			}
 			lv.Files = append(lv.Files, LibraryFileResponse{
 				ID: f.ID, SrcPath: f.SrcPath, LinkPath: f.LinkPath,
 				LinkType: f.LinkType, FileSize: f.FileSize, Resolution: f.Resolution,
 				VideoCodec: f.VideoCodec, AudioCodec: f.AudioCodec, Duration: f.Duration,
-				Bitrate: f.Bitrate, Alive: f.Alive,
+				Bitrate: f.Bitrate, Alive: f.Alive, SourceAvailable: sourceAvailable,
 			})
 		}
 
@@ -592,7 +602,7 @@ func (h *Handlers) LibraryRescrapeApply(w http.ResponseWriter, r *http.Request) 
 			Premiered:    res.New.Premiered, Year: res.New.Year, Runtime: res.New.Runtime,
 			Rating: res.New.Rating, ReviewCount: res.New.ReviewCount,
 			SampleMovieURL: res.New.SampleMovieURL,
-			PageURL: res.New.PageURL, ContentID: res.New.ContentID, Provider: res.New.Provider,
+			PageURL:        res.New.PageURL, ContentID: res.New.ContentID, Provider: res.New.Provider,
 		})
 	}
 	h.libRescrape.Delete(number)
@@ -637,6 +647,65 @@ func (h *Handlers) UnlinkBangou(w http.ResponseWriter, r *http.Request) {
 	rt.Manager.RemoveGroup(bangou.Number)
 	go rt.Scan(context.Background(), h.store)
 	writeOK(w, map[string]string{"status": "unlinked"})
+}
+
+func (h *Handlers) RestoreBangou(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeError(w, 400, "invalid id")
+		return
+	}
+	bangou, err := h.store.GetBangou(r.Context(), id)
+	if err != nil || bangou == nil {
+		writeError(w, 404, "bangou not found")
+		return
+	}
+	rt := h.registry.Get(bangou.PipelineID)
+	if rt == nil {
+		writeError(w, 404, "pipeline runtime not found")
+		return
+	}
+	files, err := h.store.ListBangouFilesByBangou(r.Context(), bangou.ID)
+	if err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	restored := 0
+	for _, f := range files {
+		if f.Alive {
+			continue
+		}
+		if err := rt.Executor.RestoreLink(r.Context(), &f); err != nil {
+			writeError(w, 500, err.Error())
+			return
+		}
+		restored++
+	}
+	writeOK(w, map[string]any{"status": "restored", "restored": restored})
+}
+
+func (h *Handlers) BackToPendingBangou(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeError(w, 400, "invalid id")
+		return
+	}
+	bangou, err := h.store.GetBangou(r.Context(), id)
+	if err != nil || bangou == nil {
+		writeError(w, 404, "bangou not found")
+		return
+	}
+	rt := h.registry.Get(bangou.PipelineID)
+	if rt == nil {
+		writeError(w, 404, "pipeline runtime not found")
+		return
+	}
+	if err := h.store.DeleteBangou(r.Context(), bangou.ID); err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	go rt.Scan(context.Background(), h.store)
+	writeOK(w, map[string]string{"status": "pending"})
 }
 
 // ── Provider Configs ──
@@ -781,4 +850,3 @@ func hasMixedMKVAndMP4Group(items []staging.StagedItem) bool {
 	}
 	return false
 }
-
