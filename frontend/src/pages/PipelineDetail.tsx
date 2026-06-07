@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { Link2, RefreshCw, ChevronLeft, ChevronRight, ArrowUpDown, Loader2 } from 'lucide-react'
 import * as api from '../api/client'
-import type { GroupResponse } from '../api/client'
+import type { GroupResponse, LibraryStatus } from '../api/client'
 import { usePolling } from '../api/usePolling'
 import GroupCard from '../components/GroupCard'
 import LibraryCard from '../components/LibraryCard'
@@ -104,15 +104,16 @@ export default function PipelineDetail() {
   const [libLoading, setLibLoading] = useState(false)
   const [libSort, setLibSort] = useState('added')
   const [libSortDir, setLibSortDir] = useState<'asc' | 'desc'>('desc')
+  const [libStatus, setLibStatus] = useState<LibraryStatus>('all')
 
   const fetchLibrary = useCallback(async () => {
     setLibLoading(true)
     try {
-      const data = await api.listLibrary(pipelineId, libPage, PAGE_SIZE, libSort, libSortDir)
+      const data = await api.listLibrary(pipelineId, libPage, PAGE_SIZE, libSort, libSortDir, libStatus)
       setLibData(data)
     } catch { /* ignore */ }
     setLibLoading(false)
-  }, [pipelineId, libPage, libSort, libSortDir])
+  }, [pipelineId, libPage, libSort, libSortDir, libStatus])
 
   useEffect(() => {
     if (tab === 'library') fetchLibrary()
@@ -182,6 +183,11 @@ export default function PipelineDetail() {
   const toggleSort = (key: string) => {
     if (libSort === key) setLibSortDir(libSortDir === 'asc' ? 'desc' : 'asc')
     else { setLibSort(key); setLibSortDir('desc') }
+    setLibPage(0)
+  }
+
+  const setLibraryStatus = (status: LibraryStatus) => {
+    setLibStatus(status)
     setLibPage(0)
   }
 
@@ -262,8 +268,16 @@ export default function PipelineDetail() {
 
       {tab === 'library' && (
         <>
-          {(libData?.total ?? 0) > 0 && (
-            <div className="flex items-center gap-2 mb-4">
+          <div className="flex flex-wrap items-center gap-2 mb-4">
+            <div className="flex items-center gap-1">
+              {(['all', 'alive', 'missing'] as LibraryStatus[]).map((status) => (
+                <button key={status} onClick={() => setLibraryStatus(status)}
+                  className={`text-xs px-2.5 py-1 rounded-lg transition-all duration-200 ${libStatus === status ? 'bg-amber-600 text-white shadow-sm shadow-amber-500/20' : 'bg-[#1a1a1a] text-gray-500 hover:text-white border border-gray-800'}`}>
+                  {status === 'all' ? 'All' : status === 'alive' ? 'Alive' : 'Link Missing'}
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center gap-2">
               <ArrowUpDown size={12} className="text-gray-600" />
               {['added', 'number', 'date', 'rating'].map((key) => (
                 <button key={key} onClick={() => toggleSort(key)}
@@ -271,9 +285,9 @@ export default function PipelineDetail() {
                   {key}{libSort === key && (libSortDir === 'desc' ? ' ↓' : ' ↑')}
                 </button>
               ))}
-              <span className="text-xs text-gray-600 ml-auto">{libData?.total} bangous</span>
             </div>
-          )}
+            <span className="text-xs text-gray-600 ml-auto">{libData?.total ?? 0} bangous</span>
+          </div>
 
           {libLoading && !libData ? (
             <div className="flex justify-center py-12"><Loader2 size={24} className="animate-spin text-gray-500" /></div>
@@ -283,8 +297,8 @@ export default function PipelineDetail() {
             </div>
           ) : (
             <div className="text-center py-12">
-              <p className="text-gray-500 mb-2">Library is empty</p>
-              <p className="text-xs text-gray-700">Link groups from the Pending tab to build your library.</p>
+              <p className="text-gray-500 mb-2">{libStatus === 'missing' ? 'No missing links' : libStatus === 'alive' ? 'No alive links' : 'Library is empty'}</p>
+              <p className="text-xs text-gray-700">{libStatus === 'all' ? 'Link groups from the Pending tab to build your library.' : 'Change the status filter to see other library entries.'}</p>
             </div>
           )}
 
