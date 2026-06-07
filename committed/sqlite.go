@@ -213,9 +213,23 @@ func resolveBangouOrder(sort, order string) string {
 	}
 }
 
-func (s *SQLiteStore) ListBangousByPipeline(ctx context.Context, pipelineID int64, limit, offset int, sort, order string) ([]Bangou, int, error) {
+func resolveBangouStatusWhere(status string) string {
+	switch status {
+	case "missing":
+		return ` AND EXISTS (SELECT 1 FROM bangou_files bf WHERE bf.bangou_id = b.id AND bf.alive = FALSE)`
+	case "alive":
+		return ` AND EXISTS (SELECT 1 FROM bangou_files bf WHERE bf.bangou_id = b.id)
+		         AND NOT EXISTS (SELECT 1 FROM bangou_files bf WHERE bf.bangou_id = b.id AND bf.alive = FALSE)`
+	default:
+		return ""
+	}
+}
+
+func (s *SQLiteStore) ListBangousByPipeline(ctx context.Context, pipelineID int64, limit, offset int, sort, order, status string) ([]Bangou, int, error) {
+	statusWhere := resolveBangouStatusWhere(status)
 	var total int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM bangous WHERE pipeline_id = ?`, pipelineID).Scan(&total); err != nil {
+	countQuery := `SELECT COUNT(*) FROM bangous b WHERE b.pipeline_id = ?` + statusWhere
+	if err := s.db.QueryRowContext(ctx, countQuery, pipelineID).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 	if limit <= 0 {
@@ -227,9 +241,9 @@ func (s *SQLiteStore) ListBangousByPipeline(ctx context.Context, pipelineID int6
 		`SELECT b.id, b.pipeline_id, b.number, b.out_dir, b.nfo_path, b.cover_path, b.raw_path, b.created_at, b.updated_at
 		 FROM bangous b
 		 LEFT JOIN metadata m ON b.id = m.bangou_id
-		 WHERE b.pipeline_id = ?
+		 WHERE b.pipeline_id = ?%s
 		 ORDER BY %s
-		 LIMIT ? OFFSET ?`, orderClause)
+		 LIMIT ? OFFSET ?`, statusWhere, orderClause)
 
 	rows, err := s.db.QueryContext(ctx, query, pipelineID, limit, offset)
 	if err != nil {
