@@ -3,8 +3,9 @@ TAG ?= latest
 PLATFORM ?= linux/arm64
 API_IMAGE ?= $(REGISTRY_URL)/bangou-api:$(TAG)
 WEB_IMAGE ?= $(REGISTRY_URL)/bangou-web:$(TAG)
+RELEASE_SHA := $(shell git rev-parse --short HEAD)
 
-.PHONY: help test build run dev docker-build docker-push release compose-up compose-down clean
+.PHONY: help test build run dev docker-build docker-push release release-sha compose-up compose-down clean
 
 help:
 	@echo "Targets:"
@@ -15,6 +16,7 @@ help:
 	@echo "  make docker-build  - Build Docker images (API + Web)"
 	@echo "  make docker-push   - Push Docker images"
 	@echo "  make release       - Build and push both images"
+	@echo "  make release-sha   - Build and push both images tagged with git SHA"
 	@echo "  make compose-up    - Start services with docker compose"
 	@echo "  make compose-down  - Stop services"
 	@echo "  make clean         - Remove build artifacts"
@@ -44,6 +46,9 @@ docker-push:
 
 release: docker-build docker-push
 	@echo "Released: $(API_IMAGE) $(WEB_IMAGE)"
+
+release-sha:
+	$(MAKE) release TAG=$(RELEASE_SHA)
 
 compose-up:
 	API_IMAGE=$(API_IMAGE) WEB_IMAGE=$(WEB_IMAGE) docker compose up -d --build

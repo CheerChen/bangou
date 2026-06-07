@@ -246,6 +246,58 @@ func (e *Executor) Unlink(ctx context.Context, file *committed.BangouFile) error
 	return nil
 }
 
+// RestoreLink recreates a missing linked file from its stored source path.
+func (e *Executor) RestoreLink(ctx context.Context, file *committed.BangouFile) error {
+	if file == nil {
+		return fmt.Errorf("nil bangou file")
+	}
+	if strings.TrimSpace(file.SrcPath) == "" {
+		return fmt.Errorf("source path is unknown")
+	}
+	if strings.TrimSpace(file.LinkPath) == "" {
+		return fmt.Errorf("link path is empty")
+	}
+	if _, err := os.Stat(file.SrcPath); err != nil {
+		return fmt.Errorf("source missing: %w", err)
+	}
+
+	outDir := filepath.Dir(file.LinkPath)
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		return fmt.Errorf("mkdir %s: %w", outDir, err)
+	}
+	_ = os.Remove(file.LinkPath)
+
+	linkType := detectLinkType(filepath.Dir(file.SrcPath), outDir)
+	actualType := linkType
+	switch linkType {
+	case "hardlink":
+		if err := os.Link(file.SrcPath, file.LinkPath); err != nil {
+			log.Printf("[restore] hardlink failed, falling back to symlink: %v", err)
+			actualType = "symlink"
+			if err := os.Symlink(file.SrcPath, file.LinkPath); err != nil {
+				return fmt.Errorf("symlink fallback: %w", err)
+			}
+		}
+	case "symlink":
+		if err := os.Symlink(file.SrcPath, file.LinkPath); err != nil {
+			return fmt.Errorf("symlink: %w", err)
+		}
+	default:
+		return fmt.Errorf("unknown link type: %s", linkType)
+	}
+
+	if actualType != file.LinkType {
+		if err := e.store.SetBangouFileLinkType(ctx, file.ID, actualType); err != nil {
+			return fmt.Errorf("update link type: %w", err)
+		}
+	}
+	if err := e.store.SetBangouFileAlive(ctx, file.ID, true); err != nil {
+		return fmt.Errorf("mark alive: %w", err)
+	}
+	log.Printf("[restore] file %d: %s -> %s", file.ID, file.SrcPath, file.LinkPath)
+	return nil
+}
+
 // cleanupBangouArtifacts removes nfo, cover, raw files tracked by the Bangou.
 func (e *Executor) cleanupBangouArtifacts(b *committed.Bangou) {
 	for _, path := range []string{b.NFOPath, b.CoverPath, b.RawPath} {
@@ -297,27 +349,27 @@ func (e *Executor) writeMetadata(ctx context.Context, bangouID int64, number, ou
 
 func (e *Executor) commitMetadata(ctx context.Context, bangouID int64, number string, meta *provider.MovieMetadata) {
 	_ = e.store.UpsertMetadata(ctx, &committed.Metadata{
-		BangouID:     bangouID,
-		Number:       number,
-		Title:        meta.Title,
-		Plot:         meta.Plot,
-		Director:     meta.Director,
-		Maker:        meta.Maker,
-		Label:        meta.Label,
-		Series:       meta.Series,
-		Actors:       strings.Join(meta.Actors, ","),
-		Genres:       strings.Join(meta.Genres, ","),
-		CoverURL:     meta.CoverURL,
-		SampleImages: strings.Join(meta.SampleImages, ","),
-		Premiered:    meta.Premiered,
-		Year:         meta.Year,
-		Runtime:      meta.Runtime,
-		Rating:       meta.Rating,
+		BangouID:       bangouID,
+		Number:         number,
+		Title:          meta.Title,
+		Plot:           meta.Plot,
+		Director:       meta.Director,
+		Maker:          meta.Maker,
+		Label:          meta.Label,
+		Series:         meta.Series,
+		Actors:         strings.Join(meta.Actors, ","),
+		Genres:         strings.Join(meta.Genres, ","),
+		CoverURL:       meta.CoverURL,
+		SampleImages:   strings.Join(meta.SampleImages, ","),
+		Premiered:      meta.Premiered,
+		Year:           meta.Year,
+		Runtime:        meta.Runtime,
+		Rating:         meta.Rating,
 		ReviewCount:    meta.ReviewCount,
 		SampleMovieURL: meta.SampleMovieURL,
 		PageURL:        meta.PageURL,
-		ContentID:    meta.ContentID,
-		Provider:     meta.Provider,
+		ContentID:      meta.ContentID,
+		Provider:       meta.Provider,
 	})
 }
 

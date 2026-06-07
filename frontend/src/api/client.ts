@@ -162,6 +162,7 @@ export interface BangouFileResponse {
   duration?: string
   bitrate?: string
   alive: boolean
+  sourceAvailable: boolean
 }
 
 export interface BangouResponse {
@@ -206,6 +207,12 @@ export const libraryDismiss = (number: string) =>
 
 export const unlinkBangou = (bangouId: number) =>
   request<unknown>('POST', `/bangous/${bangouId}/unlink`, {})
+
+export const restoreBangou = (bangouId: number) =>
+  request<unknown>('POST', `/bangous/${bangouId}/restore`, {})
+
+export const backToPendingBangou = (bangouId: number) =>
+  request<unknown>('POST', `/bangous/${bangouId}/back-to-pending`, {})
 
 // ── Provider Configs ──
 
