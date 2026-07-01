@@ -3,9 +3,11 @@ package executor
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -21,12 +23,18 @@ type Executor struct {
 	outputDir string
 }
 
+// LinkOptions carries per-pipeline config for a link operation.
+type LinkOptions struct {
+	PipelineID  int64
+	PathPattern string
+	ArchiveDir  string // empty = skip archive
+}
+
 func New(store committed.Store, stg *staging.Manager, outputDir string) *Executor {
 	return &Executor{store: store, staging: stg, outputDir: outputDir}
 }
 
 // ResolveLinkPath expands a pattern like "{Year}/{Actor}/{Number}" using metadata.
-// Only {Year}, {Actor}, {Number} are supported. {Number} is always appended if missing.
 func ResolveLinkPath(pattern, number string, meta *provider.MovieMetadata) string {
 	if strings.TrimSpace(pattern) == "" {
 		return number
@@ -47,7 +55,6 @@ func ResolveLinkPath(pattern, number string, meta *provider.MovieMetadata) strin
 		"{Number}", sanitizePath(number),
 	)
 	result := r.Replace(pattern)
-	// Ensure number is always the last segment
 	if !strings.HasSuffix(result, number) {
 		result = filepath.Join(result, number)
 	}
@@ -59,7 +66,7 @@ func sanitizePath(s string) string {
 	return r.Replace(strings.TrimSpace(s))
 }
 
-func (e *Executor) Link(ctx context.Context, number string, selectedPaths []string) error {
+func (e *Executor) Link(ctx context.Context, number string, selectedPaths []string, opts ...LinkOptions) error {
 	log.Printf("[link] %s: start, %d files selected", number, len(selectedPaths))
 	group := e.staging.GetGroup(number)
 	if group == nil {
@@ -70,16 +77,50 @@ func (e *Executor) Link(ctx context.Context, number string, selectedPaths []stri
 	if len(selected) == 0 {
 		return fmt.Errorf("no matching files for %s", number)
 	}
+	if err := validateSingleExtensionSelection(selected); err != nil {
+		return fmt.Errorf("link selection invalid for %s: %w", number, err)
+	}
 
-	// Resolve link path pattern
-	pattern, _ := e.store.GetSetting(ctx, "link_path_pattern")
+	// Resolve options
+	var opt LinkOptions
+	if len(opts) > 0 {
+		opt = opts[0]
+	}
+	pattern := opt.PathPattern
+	if pattern == "" {
+		pattern, _ = e.store.GetSetting(ctx, "link_path_pattern")
+	}
+
+	// Archive: move source files to archive dir before linking
+	if opt.ArchiveDir != "" {
+		for i, item := range selected {
+			archived, err := archiveFile(item.File.Path, opt.ArchiveDir)
+			if err != nil {
+				return fmt.Errorf("archive %s: %w", item.File.Filename, err)
+			}
+			log.Printf("[link] %s: archived %s -> %s", number, item.File.Path, archived)
+			selected[i].File.Path = archived
+		}
+	}
+
 	relPath := ResolveLinkPath(pattern, number, group.Scrape.Meta)
 	outDir := filepath.Join(e.outputDir, relPath)
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return fmt.Errorf("mkdir %s: %w", outDir, err)
 	}
 
-	linkType := detectLinkType(filepath.Dir(selected[0].File.Path), e.outputDir)
+	// Create the Bangou aggregate root
+	bangouID, err := e.store.CreateBangou(ctx, &committed.Bangou{
+		PipelineID: opt.PipelineID,
+		Number:     number,
+		OutDir:     outDir,
+	})
+	if err != nil {
+		return fmt.Errorf("create bangou: %w", err)
+	}
+
+	srcDir := filepath.Dir(selected[0].File.Path)
+	linkType := detectLinkType(srcDir, e.outputDir)
 	multiPart := len(selected) > 1
 	log.Printf("[link] %s: linkType=%s multiPart=%v outDir=%s", number, linkType, multiPart, outDir)
 
@@ -90,23 +131,33 @@ func (e *Executor) Link(ctx context.Context, number string, selectedPaths []stri
 		if err != nil {
 			return fmt.Errorf("link part %d: %w", part, err)
 		}
-		if err := e.store.CreateOutput(ctx, &committed.Output{Number: number, SrcPath: item.File.Path, LinkPath: result.LinkPath, LinkType: result.LinkType}); err != nil {
-			return fmt.Errorf("store output: %w", err)
+		bf := &committed.BangouFile{
+			BangouID: bangouID,
+			SrcPath:  item.File.Path,
+			LinkPath: result.LinkPath,
+			LinkType: result.LinkType,
+			FileSize: item.File.Size,
+		}
+		if item.File.Media != nil {
+			bf.Resolution = item.File.Media.Resolution()
+			bf.VideoCodec = item.File.Media.VideoCodec
+			bf.AudioCodec = item.File.Media.AudioCodec
+			bf.Duration = item.File.Media.DurationText()
+			bf.Bitrate = item.File.Media.BitrateText()
+		}
+		if err := e.store.CreateBangouFile(ctx, bf); err != nil {
+			return fmt.Errorf("store bangou file: %w", err)
 		}
 		log.Printf("[link] %s: part %d %s %s -> %s", number, part, result.LinkType, item.File.Path, result.LinkPath)
 	}
 
-	e.writeMetadata(ctx, number, outDir, group.Scrape.Meta)
-	if group.Scrape.Meta != nil {
-		e.commitMetadata(ctx, number, group.Scrape.Meta)
-	}
+	e.writeMetadata(ctx, bangouID, number, outDir, group.Scrape.Meta)
 	e.staging.RemoveGroup(number)
 	log.Printf("[link] %s: done, %d files linked", number, len(selected))
 	return nil
 }
 
 // Merge combines selected parts into a single mkv in the same input directory.
-// Does not create output links or remove the group — user should Rescan and then Link.
 func (e *Executor) Merge(ctx context.Context, number string, selectedPaths []string) error {
 	log.Printf("[merge] %s: start, %d files selected", number, len(selectedPaths))
 	group := e.staging.GetGroup(number)
@@ -118,18 +169,26 @@ func (e *Executor) Merge(ctx context.Context, number string, selectedPaths []str
 	if len(selected) < 2 {
 		return fmt.Errorf("need 2+ files to merge %s", number)
 	}
+	if hasMixedMKVAndMP4(group.Items) {
+		return fmt.Errorf("merge is disabled for mixed mkv/mp4 groups")
+	}
 
-	// Output to same directory as source files
 	inputDir := filepath.Dir(selected[0].File.Path)
-	mergedPath := filepath.Join(inputDir, number+".mkv")
+	mergeTag, err := buildMergeSourceTag(selected)
+	if err != nil {
+		return fmt.Errorf("invalid merge selection for %s: %w", number, err)
+	}
+	mergedPath := filepath.Join(inputDir, number+"_"+mergeTag+".mkv")
 
 	parts := make([]string, 0, len(selected))
+	var totalSize int64
 	for _, item := range selected {
 		parts = append(parts, item.File.Path)
+		totalSize += item.File.Size
 		log.Printf("[merge] %s: input part: %s (%.2f GB)", number, item.File.Filename, float64(item.File.Size)/(1024*1024*1024))
 	}
-	log.Printf("[merge] %s: running mkvmerge -> %s", number, mergedPath)
-	if err := MergeFiles(parts, mergedPath, func(pct int) {
+	log.Printf("[merge] %s: running mkvmerge -> %s (total %.2f GB)", number, mergedPath, float64(totalSize)/(1024*1024*1024))
+	if err := MergeFiles(parts, mergedPath, totalSize, func(pct int) {
 		log.Printf("[merge] %s: progress %d%%", number, pct)
 		e.staging.SetTaskProgress(number, pct)
 	}); err != nil {
@@ -139,77 +198,221 @@ func (e *Executor) Merge(ctx context.Context, number string, selectedPaths []str
 	return nil
 }
 
-// Unlink removes link files, nfo, cover, and raw from the output directory (keeps the directory).
-// Deletes DB output and metadata records.
-func (e *Executor) Unlink(ctx context.Context, number string, outputID int64) error {
-	log.Printf("[unlink] %s: start", number)
-
-	outDir := filepath.Join(e.outputDir, number)
-	entries, err := os.ReadDir(outDir)
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("read dir: %w", err)
-	}
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		path := filepath.Join(outDir, entry.Name())
-		log.Printf("[unlink] %s: removing %s", number, entry.Name())
-		if err := os.Remove(path); err != nil {
-			log.Printf("[unlink] %s: warn: %v", number, err)
-		}
+// Unlink removes a linked file. When it's the last file under its Bangou,
+// also removes metadata artifacts (nfo, cover, raw) and the Bangou record.
+func (e *Executor) Unlink(ctx context.Context, file *committed.BangouFile) error {
+	if file == nil {
+		return fmt.Errorf("nil bangou file")
 	}
 
-	if err := e.store.DeleteOutput(ctx, outputID); err != nil {
-		return fmt.Errorf("delete output: %w", err)
+	bangou, err := e.store.GetBangou(ctx, file.BangouID)
+	if err != nil {
+		return fmt.Errorf("get bangou: %w", err)
 	}
-	log.Printf("[unlink] %s: done", number)
+	if bangou == nil {
+		return fmt.Errorf("bangou %d not found", file.BangouID)
+	}
+	log.Printf("[unlink] %s: start (file %d)", bangou.Number, file.ID)
+
+	// 1. Remove the link file
+	linkPath := strings.TrimSpace(file.LinkPath)
+	if linkPath == "" {
+		return fmt.Errorf("empty link path")
+	}
+	if err := os.Remove(linkPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove link file: %w", err)
+	}
+	log.Printf("[unlink] %s: removed %s", bangou.Number, filepath.Base(linkPath))
+
+	// 2. Delete the file record
+	if err := e.store.DeleteBangouFile(ctx, file.ID); err != nil {
+		return fmt.Errorf("delete bangou file: %w", err)
+	}
+
+	// 3. If this was the last file, clean up the entire Bangou
+	remaining, err := e.store.CountBangouFiles(ctx, bangou.ID)
+	if err != nil {
+		return fmt.Errorf("count remaining files: %w", err)
+	}
+	if remaining == 0 {
+		log.Printf("[unlink] %s: last file removed, cleaning up bangou", bangou.Number)
+		e.cleanupBangouArtifacts(bangou)
+		if err := e.store.DeleteBangou(ctx, bangou.ID); err != nil {
+			return fmt.Errorf("delete bangou: %w", err)
+		}
+	}
+
+	log.Printf("[unlink] %s: done", bangou.Number)
 	return nil
 }
 
-func (e *Executor) writeMetadata(ctx context.Context, number, outDir string, meta *provider.MovieMetadata) {
-	if meta == nil {
-		return
+// RestoreLink recreates a missing linked file from its stored source path.
+func (e *Executor) RestoreLink(ctx context.Context, file *committed.BangouFile) error {
+	if file == nil {
+		return fmt.Errorf("nil bangou file")
 	}
-	nfoPath := filepath.Join(outDir, number+".nfo")
-	if err := nfo.Save(meta, nfoPath); err != nil {
-		log.Printf("warn: write nfo %s: %v", number, err)
+	if strings.TrimSpace(file.SrcPath) == "" {
+		return fmt.Errorf("source path is unknown")
 	}
-	_ = provider.DownloadCover(ctx, meta.CoverURL, outDir, number)
+	if strings.TrimSpace(file.LinkPath) == "" {
+		return fmt.Errorf("link path is empty")
+	}
+	if _, err := os.Stat(file.SrcPath); err != nil {
+		return fmt.Errorf("source missing: %w", err)
+	}
 
-	// Write raw provider response for debugging
-	if len(meta.RawJSON) > 0 {
-		rawPath := filepath.Join(outDir, number+"-raw."+meta.Provider)
-		if err := os.WriteFile(rawPath, meta.RawJSON, 0o644); err != nil {
-			log.Printf("warn: write raw %s: %v", number, err)
-		} else {
-			log.Printf("[link] %s: raw response saved to %s", number, rawPath)
+	outDir := filepath.Dir(file.LinkPath)
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		return fmt.Errorf("mkdir %s: %w", outDir, err)
+	}
+	_ = os.Remove(file.LinkPath)
+
+	linkType := detectLinkType(filepath.Dir(file.SrcPath), outDir)
+	actualType := linkType
+	switch linkType {
+	case "hardlink":
+		if err := os.Link(file.SrcPath, file.LinkPath); err != nil {
+			log.Printf("[restore] hardlink failed, falling back to symlink: %v", err)
+			actualType = "symlink"
+			if err := os.Symlink(file.SrcPath, file.LinkPath); err != nil {
+				return fmt.Errorf("symlink fallback: %w", err)
+			}
 		}
+	case "symlink":
+		if err := os.Symlink(file.SrcPath, file.LinkPath); err != nil {
+			return fmt.Errorf("symlink: %w", err)
+		}
+	default:
+		return fmt.Errorf("unknown link type: %s", linkType)
+	}
+
+	if actualType != file.LinkType {
+		if err := e.store.SetBangouFileLinkType(ctx, file.ID, actualType); err != nil {
+			return fmt.Errorf("update link type: %w", err)
+		}
+	}
+	if err := e.store.SetBangouFileAlive(ctx, file.ID, true); err != nil {
+		return fmt.Errorf("mark alive: %w", err)
+	}
+	log.Printf("[restore] file %d: %s -> %s", file.ID, file.SrcPath, file.LinkPath)
+	return nil
+}
+
+// cleanupBangouArtifacts removes nfo, cover, raw files tracked by the Bangou.
+func (e *Executor) cleanupBangouArtifacts(b *committed.Bangou) {
+	for _, path := range []string{b.NFOPath, b.CoverPath, b.RawPath} {
+		if path == "" {
+			continue
+		}
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			log.Printf("[unlink] %s: warn: remove %s: %v", b.Number, filepath.Base(path), err)
+		} else if err == nil {
+			log.Printf("[unlink] %s: removed %s", b.Number, filepath.Base(path))
+		}
+	}
+	// Try to remove the output directory if empty
+	if b.OutDir != "" {
+		_ = os.Remove(b.OutDir) // only succeeds if empty
 	}
 }
 
-func (e *Executor) commitMetadata(ctx context.Context, number string, meta *provider.MovieMetadata) {
+func (e *Executor) writeMetadata(ctx context.Context, bangouID int64, number, outDir string, meta *provider.MovieMetadata) {
+	if meta == nil {
+		return
+	}
+
+	var nfoPath, coverPath, rawPath string
+
+	nfoPath = filepath.Join(outDir, number+".nfo")
+	if err := nfo.Save(meta, nfoPath); err != nil {
+		log.Printf("warn: write nfo %s: %v", number, err)
+		nfoPath = ""
+	}
+
+	coverPath = provider.DownloadCover(ctx, meta.CoverURL, outDir, number)
+
+	if len(meta.RawJSON) > 0 {
+		rawPath = filepath.Join(outDir, number+"-raw."+meta.Provider)
+		if err := os.WriteFile(rawPath, meta.RawJSON, 0o644); err != nil {
+			log.Printf("warn: write raw %s: %v", number, err)
+			rawPath = ""
+		}
+	}
+
+	// Record artifact paths on Bangou
+	if err := e.store.UpdateBangouPaths(ctx, bangouID, nfoPath, coverPath, rawPath); err != nil {
+		log.Printf("warn: update bangou paths %s: %v", number, err)
+	}
+
+	e.commitMetadata(ctx, bangouID, number, meta)
+}
+
+func (e *Executor) commitMetadata(ctx context.Context, bangouID int64, number string, meta *provider.MovieMetadata) {
 	_ = e.store.UpsertMetadata(ctx, &committed.Metadata{
-		Number:       number,
-		Title:        meta.Title,
-		Plot:         meta.Plot,
-		Director:     meta.Director,
-		Maker:        meta.Maker,
-		Label:        meta.Label,
-		Series:       meta.Series,
-		Actors:       strings.Join(meta.Actors, ","),
-		Genres:       strings.Join(meta.Genres, ","),
-		CoverURL:     meta.CoverURL,
-		SampleImages: strings.Join(meta.SampleImages, ","),
-		Premiered:    meta.Premiered,
-		Year:         meta.Year,
-		Runtime:      meta.Runtime,
-		Rating:       meta.Rating,
-		ReviewCount:  meta.ReviewCount,
-		PageURL:      meta.PageURL,
-		ContentID:    meta.ContentID,
-		Provider:     meta.Provider,
+		BangouID:       bangouID,
+		Number:         number,
+		Title:          meta.Title,
+		Plot:           meta.Plot,
+		Director:       meta.Director,
+		Maker:          meta.Maker,
+		Label:          meta.Label,
+		Series:         meta.Series,
+		Actors:         strings.Join(meta.Actors, ","),
+		Genres:         strings.Join(meta.Genres, ","),
+		CoverURL:       meta.CoverURL,
+		SampleImages:   strings.Join(meta.SampleImages, ","),
+		Premiered:      meta.Premiered,
+		Year:           meta.Year,
+		Runtime:        meta.Runtime,
+		Rating:         meta.Rating,
+		ReviewCount:    meta.ReviewCount,
+		SampleMovieURL: meta.SampleMovieURL,
+		PageURL:        meta.PageURL,
+		ContentID:      meta.ContentID,
+		Provider:       meta.Provider,
 	})
+}
+
+// archiveFile moves a file from srcPath to archiveDir, preserving the filename.
+// Uses os.Rename for same-device moves, falls back to copy+delete for cross-device.
+func archiveFile(srcPath, archiveDir string) (string, error) {
+	if err := os.MkdirAll(archiveDir, 0o755); err != nil {
+		return "", fmt.Errorf("mkdir archive: %w", err)
+	}
+	dst := filepath.Join(archiveDir, filepath.Base(srcPath))
+
+	// Try rename first (instant if same device)
+	if err := os.Rename(srcPath, dst); err == nil {
+		return dst, nil
+	}
+
+	// Cross-device: copy then delete
+	log.Printf("[archive] cross-device move: %s -> %s", srcPath, dst)
+	src, err := os.Open(srcPath)
+	if err != nil {
+		return "", err
+	}
+	defer src.Close()
+
+	dstFile, err := os.Create(dst)
+	if err != nil {
+		return "", err
+	}
+	defer dstFile.Close()
+
+	if _, err := io.Copy(dstFile, src); err != nil {
+		os.Remove(dst)
+		return "", fmt.Errorf("copy: %w", err)
+	}
+	if err := dstFile.Close(); err != nil {
+		os.Remove(dst)
+		return "", err
+	}
+	src.Close()
+	if err := os.Remove(srcPath); err != nil {
+		log.Printf("[archive] warn: remove source after copy: %v", err)
+	}
+	return dst, nil
 }
 
 func filterItems(items []staging.StagedItem, paths []string) []staging.StagedItem {
@@ -224,6 +427,82 @@ func filterItems(items []staging.StagedItem, paths []string) []staging.StagedIte
 		}
 	}
 	return out
+}
+
+func buildMergeSourceTag(selected []staging.StagedItem) (string, error) {
+	if len(selected) == 0 {
+		return "", fmt.Errorf("no selected files")
+	}
+
+	withPart := 0
+	for _, item := range selected {
+		if item.Parsed.Part > 0 {
+			withPart++
+		}
+	}
+	if withPart > 0 && withPart < len(selected) {
+		return "", fmt.Errorf("part numbers must be either all present or all absent")
+	}
+
+	var b strings.Builder
+	b.WriteString("m")
+
+	if withPart == 0 {
+		for i := 1; i <= len(selected); i++ {
+			b.WriteString(strconv.Itoa(i))
+		}
+		return b.String(), nil
+	}
+
+	seen := make(map[int]struct{}, len(selected))
+	for _, item := range selected {
+		p := item.Parsed.Part
+		if _, ok := seen[p]; ok {
+			return "", fmt.Errorf("duplicate part number: %d", p)
+		}
+		seen[p] = struct{}{}
+		b.WriteString(strconv.Itoa(p))
+	}
+	return b.String(), nil
+}
+
+func validateSingleExtensionSelection(selected []staging.StagedItem) error {
+	extSet := make(map[string]struct{}, len(selected))
+	for _, item := range selected {
+		ext := strings.ToLower(filepath.Ext(item.File.Filename))
+		if ext == "" {
+			ext = strings.ToLower(filepath.Ext(item.File.Path))
+		}
+		if ext == "" {
+			return fmt.Errorf("missing extension: %s", item.File.Filename)
+		}
+		extSet[ext] = struct{}{}
+		if len(extSet) > 1 {
+			return fmt.Errorf("multiple extensions selected")
+		}
+	}
+	return nil
+}
+
+func hasMixedMKVAndMP4(items []staging.StagedItem) bool {
+	hasMKV := false
+	hasMP4 := false
+	for _, item := range items {
+		ext := strings.ToLower(filepath.Ext(item.File.Filename))
+		if ext == "" {
+			ext = strings.ToLower(filepath.Ext(item.File.Path))
+		}
+		switch ext {
+		case ".mkv":
+			hasMKV = true
+		case ".mp4":
+			hasMP4 = true
+		}
+		if hasMKV && hasMP4 {
+			return true
+		}
+	}
+	return false
 }
 
 func detectLinkType(input, output string) string {

@@ -1,0 +1,20 @@
+@import "tailwindcss";
+
+/* Focus visible ring for keyboard navigation */
+@layer base {
+  *:focus-visible {
+    outline: 2px solid #6366f1;
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  /* Disable animations for users who prefer reduced motion */
+  @media (prefers-reduced-motion: reduce) {
+    .animate-pulse {
+      animation: none !important;
+    }
+    .animate-spin {
+      animation: none !important;
+    }
+  }
+}

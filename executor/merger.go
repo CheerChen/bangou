@@ -1,12 +1,11 @@
 package executor
 
 import (
-	"bufio"
+	"bytes"
 	"fmt"
-	"io"
+	"os"
 	"os/exec"
-	"strconv"
-	"strings"
+	"time"
 )
 
 func BuildMergeCommand(parts []string, output string) *exec.Cmd {
@@ -20,59 +19,79 @@ func BuildMergeCommand(parts []string, output string) *exec.Cmd {
 	return exec.Command("mkvmerge", args...)
 }
 
-// MergeFiles runs mkvmerge and calls onProgress(0-100) as progress updates arrive.
+// MergeFiles runs mkvmerge and reports coarse progress from the output file size.
 // onProgress may be nil.
-func MergeFiles(parts []string, output string, onProgress func(int)) error {
+func MergeFiles(parts []string, output string, totalSize int64, onProgress func(int)) error {
 	if len(parts) < 2 {
 		return fmt.Errorf("need at least 2 parts to merge")
 	}
 	cmd := BuildMergeCommand(parts, output)
-
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return fmt.Errorf("stdout pipe: %w", err)
-	}
-	cmd.Stderr = cmd.Stdout // merge stderr into stdout
+	var outputLog bytes.Buffer
+	cmd.Stdout = &outputLog
+	cmd.Stderr = &outputLog
 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("mkvmerge start: %w", err)
 	}
 
-	// Parse "Progress: 45%" lines in real time
-	scanner := bufio.NewScanner(stdout)
-	var lastOutput strings.Builder
-	for scanner.Scan() {
-		line := scanner.Text()
-		lastOutput.WriteString(line)
-		lastOutput.WriteByte('\n')
-		if pct, ok := parseProgress(line); ok && onProgress != nil {
-			onProgress(pct)
-		}
+	done := make(chan struct{})
+	if onProgress != nil && totalSize > 0 {
+		go pollMergeProgress(output, totalSize, onProgress, done)
 	}
 
-	// Drain remaining output
-	remaining, _ := io.ReadAll(stdout)
-	lastOutput.Write(remaining)
-
-	if err := cmd.Wait(); err != nil {
-		return fmt.Errorf("mkvmerge failed: %w\n%s", err, lastOutput.String())
+	err := cmd.Wait()
+	close(done)
+	if err != nil {
+		// mkvmerge exit codes: 0 = success, 1 = warnings (ok), 2 = error
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+			// warnings only, merge succeeded
+		} else {
+			return fmt.Errorf("mkvmerge failed: %w\n%s", err, outputLog.String())
+		}
+	}
+	if onProgress != nil {
+		onProgress(100)
 	}
 	return nil
 }
 
-// parseProgress extracts percentage from "Progress: 45%" lines.
-func parseProgress(line string) (int, bool) {
-	line = strings.TrimSpace(line)
-	if !strings.HasPrefix(line, "Progress:") {
-		return 0, false
+func pollMergeProgress(output string, totalSize int64, onProgress func(int), done <-chan struct{}) {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+
+	lastPct := -1
+	for {
+		select {
+		case <-done:
+			return
+		case <-ticker.C:
+			fi, err := os.Stat(output)
+			if err != nil {
+				if !os.IsNotExist(err) {
+					continue
+				}
+				if lastPct != 0 {
+					lastPct = 0
+					onProgress(0)
+				}
+				continue
+			}
+			pct := mergeProgressFromSize(fi.Size(), totalSize)
+			if pct != lastPct {
+				lastPct = pct
+				onProgress(pct)
+			}
+		}
 	}
-	s := strings.TrimPrefix(line, "Progress:")
-	s = strings.TrimSpace(s)
-	s = strings.TrimSuffix(s, "%")
-	s = strings.TrimSpace(s)
-	pct, err := strconv.Atoi(s)
-	if err != nil {
-		return 0, false
+}
+
+func mergeProgressFromSize(currentSize, totalSize int64) int {
+	if totalSize <= 0 || currentSize <= 0 {
+		return 0
 	}
-	return pct, true
+	pct := int(currentSize * 100 / totalSize)
+	if pct > 99 {
+		return 99
+	}
+	return pct
 }

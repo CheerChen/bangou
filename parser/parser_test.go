@@ -54,6 +54,46 @@ func TestParse(t *testing.T) {
 			want:     ParsedFile{Number: "HNVR-141", RawNumber: "hnvr00141", Part: 3, Tags: nil, Ext: ".mp4", SourceSite: "4k2.com"},
 		},
 		{
+			name:     "six letter prefix with trailing part",
+			filename: "urvrsp-229-3.mp4",
+			want:     ParsedFile{Number: "URVRSP-229", RawNumber: "urvrsp229", Part: 3, Ext: ".mp4"},
+		},
+		{
+			name:     "hash suffix no separator",
+			filename: "mdvr00271vrv18khia2.mp4",
+			want:     ParsedFile{Number: "MDVR-271", RawNumber: "mdvr00271", Part: 0, Ext: ".mp4"},
+		},
+		{
+			name:     "hash suffix no separator 2",
+			filename: "savr00304vrv1uhqf2.mp4",
+			want:     ParsedFile{Number: "SAVR-304", RawNumber: "savr00304", Part: 0, Ext: ".mp4"},
+		},
+		{
+			name:     "letter part A",
+			filename: "HNVR-011-A.mp4",
+			want:     ParsedFile{Number: "HNVR-011", RawNumber: "hnvr011", Part: 1, Ext: ".mp4"},
+		},
+		{
+			name:     "letter part C lowercase",
+			filename: "HNVR-011-c.mp4",
+			want:     ParsedFile{Number: "HNVR-011", RawNumber: "hnvr011", Part: 3, Ext: ".mp4"},
+		},
+		{
+			name:     "bracket site prefix with part",
+			filename: "[fbfb.me]sivr00102.part2.mp4",
+			want:     ParsedFile{Number: "SIVR-102", RawNumber: "sivr00102", Part: 2, Ext: ".mp4", SourceSite: "fbfb.me"},
+		},
+		{
+			name:     "h_ prefix with numeric content ID",
+			filename: "h_386acrn00119.mkv",
+			want:     ParsedFile{Number: "386ACRN-119", RawNumber: "386acrn00119", Part: 0, Ext: ".mkv"},
+		},
+		{
+			name:     "h_ prefix with numeric content ID 2",
+			filename: "h_454dplt09676.mkv",
+			want:     ParsedFile{Number: "454DPLT-9676", RawNumber: "454dplt09676", Part: 0, Ext: ".mkv"},
+		},
+		{
 			name:     "unrecognizable",
 			filename: "random_video_2025.mp4",
 			want:     ParsedFile{Ext: ".mp4"},

@@ -18,11 +18,16 @@ type movie struct {
 	Runtime   string   `xml:"runtime,omitempty"`
 	Genre     []string `xml:"genre"`
 	Studio    string   `xml:"studio,omitempty"`
+	Set       *set     `xml:"set,omitempty"`
 	Tag       []string `xml:"tag"`
 	Actor     []actor  `xml:"actor"`
 	Label     string   `xml:"label,omitempty"`
 	Num       string   `xml:"num"`
 	Cover     string   `xml:"cover,omitempty"`
+}
+
+type set struct {
+	Name string `xml:"name"`
 }
 
 type actor struct {
@@ -44,6 +49,11 @@ func Generate(meta *provider.MovieMetadata) ([]byte, error) {
 		}
 	}
 
+	var s *set
+	if meta.Series != "" {
+		s = &set{Name: meta.Series}
+	}
+
 	m := movie{
 		Plot:      meta.Plot,
 		Title:     fmt.Sprintf("%s %s", meta.Number, meta.Title),
@@ -53,6 +63,7 @@ func Generate(meta *provider.MovieMetadata) ([]byte, error) {
 		Runtime:   meta.Runtime,
 		Genre:     meta.Genres,
 		Studio:    meta.Maker,
+		Set:       s,
 		Tag:       tags,
 		Actor:     actors,
 		Label:     meta.Label,
