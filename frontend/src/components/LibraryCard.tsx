@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useRef, useReducer } from 'react'
 import { ExternalLink, RefreshCw, Unlink, CheckCircle, AlertCircle, Layers, FileVideo, Link as LinkIcon, FileText, Image, Loader2, ChevronRight, Calendar, Users, Play, RotateCcw } from 'lucide-react'
 import * as api from '../api/client'
 import type { BangouResponse, BangouFileResponse } from '../api/client'
@@ -11,16 +11,63 @@ interface Props {
   onAction: () => void
 }
 
+type AsyncState = {
+  showUnlinkConfirm: boolean
+  showBackConfirm: boolean
+  unlinking: boolean
+  restoring: boolean
+  backingToPending: boolean
+  rescraping: boolean
+  error: string | null
+}
+
+type AsyncAction =
+  | { type: 'showUnlink' }
+  | { type: 'hideUnlink' }
+  | { type: 'showBack' }
+  | { type: 'hideBack' }
+  | { type: 'startUnlink' }
+  | { type: 'endUnlink' }
+  | { type: 'startRestore' }
+  | { type: 'endRestore' }
+  | { type: 'startBack' }
+  | { type: 'endBack' }
+  | { type: 'startRescrape' }
+  | { type: 'endRescrape' }
+  | { type: 'setError'; error: string | null }
+
+const initialAsync: AsyncState = {
+  showUnlinkConfirm: false,
+  showBackConfirm: false,
+  unlinking: false,
+  restoring: false,
+  backingToPending: false,
+  rescraping: false,
+  error: null,
+}
+
+function asyncReducer(state: AsyncState, action: AsyncAction): AsyncState {
+  switch (action.type) {
+    case 'showUnlink': return { ...state, showUnlinkConfirm: true }
+    case 'hideUnlink': return { ...state, showUnlinkConfirm: false }
+    case 'showBack': return { ...state, showBackConfirm: true }
+    case 'hideBack': return { ...state, showBackConfirm: false }
+    case 'startUnlink': return { ...state, unlinking: true, error: null }
+    case 'endUnlink': return { ...state, unlinking: false }
+    case 'startRestore': return { ...state, restoring: true, error: null }
+    case 'endRestore': return { ...state, restoring: false }
+    case 'startBack': return { ...state, backingToPending: true, error: null }
+    case 'endBack': return { ...state, backingToPending: false }
+    case 'startRescrape': return { ...state, rescraping: true, error: null }
+    case 'endRescrape': return { ...state, rescraping: false }
+    case 'setError': return { ...state, error: action.error }
+  }
+}
+
 export default function LibraryCard({ item, onAction }: Props) {
   const lightbox = useLightbox()
   const imgRef = useRef<HTMLImageElement>(null)
-  const [showUnlinkConfirm, setShowUnlinkConfirm] = useState(false)
-  const [showBackConfirm, setShowBackConfirm] = useState(false)
-  const [unlinking, setUnlinking] = useState(false)
-  const [restoring, setRestoring] = useState(false)
-  const [backingToPending, setBackingToPending] = useState(false)
-  const [rescraping, setRescraping] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [state, dispatch] = useReducer(asyncReducer, initialAsync)
   const outputs = item.outputs || []
   const allAlive = outputs.length > 0 && outputs.every((o) => o.alive)
   const missingOutputs = outputs.filter((o) => !o.alive)
@@ -28,44 +75,40 @@ export default function LibraryCard({ item, onAction }: Props) {
   const canRestore = hasMissing && missingOutputs.every((o) => o.sourceAvailable)
 
   const handleRescrape = async () => {
-    setRescraping(true)
-    setError(null)
-    try { await api.libraryRescrape(item.number) } catch (e: any) { setError(e.message) }
-    setRescraping(false)
+    dispatch({ type: 'startRescrape' })
+    try { await api.libraryRescrape(item.number) } catch (e: any) { dispatch({ type: 'setError', error: e.message }) }
+    dispatch({ type: 'endRescrape' })
   }
   const handleUnlink = () => {
     if (outputs.length === 0) return
-    setShowUnlinkConfirm(true)
+    dispatch({ type: 'showUnlink' })
   }
   const handleUnlinkConfirm = async () => {
-    setUnlinking(true)
-    setError(null)
+    dispatch({ type: 'startUnlink' })
     try {
       await api.unlinkBangou(item.id)
-      setShowUnlinkConfirm(false)
+      dispatch({ type: 'hideUnlink' })
       onAction()
-    } catch (e: any) { setError(e.message) }
-    setUnlinking(false)
+    } catch (e: any) { dispatch({ type: 'setError', error: e.message }) }
+    dispatch({ type: 'endUnlink' })
   }
   const handleRestore = async () => {
     if (!canRestore) return
-    setRestoring(true)
-    setError(null)
+    dispatch({ type: 'startRestore' })
     try {
       await api.restoreBangou(item.id)
       onAction()
-    } catch (e: any) { setError(e.message) }
-    setRestoring(false)
+    } catch (e: any) { dispatch({ type: 'setError', error: e.message }) }
+    dispatch({ type: 'endRestore' })
   }
   const handleBackConfirm = async () => {
-    setBackingToPending(true)
-    setError(null)
+    dispatch({ type: 'startBack' })
     try {
       await api.backToPendingBangou(item.id)
-      setShowBackConfirm(false)
+      dispatch({ type: 'hideBack' })
       onAction()
-    } catch (e: any) { setError(e.message) }
-    setBackingToPending(false)
+    } catch (e: any) { dispatch({ type: 'setError', error: e.message }) }
+    dispatch({ type: 'endBack' })
   }
   const hasVideo = !!item.sampleMovieURL
   const galleryItems: LightboxItem[] = []
@@ -93,7 +136,8 @@ export default function LibraryCard({ item, onAction }: Props) {
   return (
     <div className="bg-[#1a1a1a] border border-gray-800 rounded-xl overflow-hidden hover:border-gray-700 transition flex flex-col">
       {item.coverURL && (
-        <div className="relative aspect-[16/9] overflow-hidden bg-black group/cover cursor-pointer"
+        <button type="button" className="relative aspect-[16/9] overflow-hidden bg-black group/cover cursor-pointer block w-full"
+          aria-label={`Open gallery for ${item.number}`}
           onClick={() => lightbox.open(galleryItems, 0, imgRef.current || undefined)}>
           <img ref={imgRef} src={item.coverURL} alt={`${item.number} cover`}
             className="w-full h-full object-cover opacity-90 group-hover/cover:scale-105 transition-transform duration-300 motion-reduce:transition-none motion-reduce:group-hover/cover:scale-100" />
@@ -128,7 +172,7 @@ export default function LibraryCard({ item, onAction }: Props) {
               ? <span className="text-xs px-2 py-0.5 bg-emerald-500/20 text-emerald-400 rounded flex items-center gap-1"><CheckCircle size={10} />alive</span>
               : <span className="text-xs px-2 py-0.5 bg-red-500/20 text-red-400 rounded flex items-center gap-1"><AlertCircle size={10} />link missing</span>}
           </div>
-        </div>
+        </button>
       )}
       <div className="p-4 space-y-3 flex-1 flex flex-col">
         {item.title && <div className="text-sm text-gray-300 line-clamp-2">{item.title}</div>}
@@ -203,34 +247,34 @@ export default function LibraryCard({ item, onAction }: Props) {
           </div>
         </details>
 
-        {error && (
+        {state.error && (
           <div className="text-xs text-red-400 bg-red-500/10 px-3 py-2 rounded-lg">
-            {error}
-            <button onClick={() => setError(null)} className="ml-2 text-red-300 hover:text-white">✕</button>
+            {state.error}
+            <button type="button" onClick={() => dispatch({ type: 'setError', error: null })} className="ml-2 text-red-300 hover:text-white">✕</button>
           </div>
         )}
 
         {/* Actions */}
         <div className="flex gap-1.5 pt-2 border-t border-gray-800 mt-auto">
-          <button onClick={handleRescrape} disabled={rescraping}
+          <button type="button" onClick={handleRescrape} disabled={state.rescraping}
             className="flex items-center gap-1 text-xs px-2.5 py-1.5 text-gray-500 hover:text-white hover:bg-[#222] rounded-lg transition disabled:opacity-50">
-            {rescraping ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+            {state.rescraping ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
             Rescrape
           </button>
           {hasMissing ? (
             <>
-              <button onClick={handleRestore} disabled={!canRestore || restoring}
+              <button type="button" onClick={handleRestore} disabled={!canRestore || state.restoring}
                 className="flex items-center gap-1 text-xs px-2.5 py-1.5 text-gray-500 hover:text-emerald-400 hover:bg-[#222] rounded-lg transition disabled:opacity-40 disabled:hover:text-gray-500">
-                {restoring ? <Loader2 size={12} className="animate-spin" /> : <LinkIcon size={12} />}
+                {state.restoring ? <Loader2 size={12} className="animate-spin" /> : <LinkIcon size={12} />}
                 Restore Link
               </button>
-              <button onClick={() => setShowBackConfirm(true)} disabled={backingToPending}
+              <button type="button" onClick={() => dispatch({ type: 'showBack' })} disabled={state.backingToPending}
                 className="flex items-center gap-1 text-xs px-2.5 py-1.5 text-gray-500 hover:text-amber-400 hover:bg-[#222] rounded-lg transition disabled:opacity-50">
                 <RotateCcw size={12} />Back to Pending
               </button>
             </>
           ) : (
-            <button onClick={handleUnlink}
+            <button type="button" onClick={handleUnlink}
               className="flex items-center gap-1 text-xs px-2.5 py-1.5 text-gray-500 hover:text-amber-400 hover:bg-[#222] rounded-lg transition">
               <Unlink size={12} />Unlink
             </button>
@@ -239,69 +283,24 @@ export default function LibraryCard({ item, onAction }: Props) {
       </div>
 
       {/* Unlink confirmation modal */}
-      <Modal open={showUnlinkConfirm} onClose={() => !unlinking && setShowUnlinkConfirm(false)} title={`Unlink ${item.number}`}>
-        <div className="space-y-4">
-          <p className="text-sm text-gray-400">
-            This will remove {outputs.length} linked file{outputs.length > 1 ? 's' : ''} and related sidecars.
-          </p>
-          <div className="rounded-lg border border-gray-800 bg-[#111] max-h-64 overflow-y-auto">
-            {unlinkTargets.map((target) => (
-              <div key={`${target.kind}-${target.path}`} className="flex items-center gap-2 border-b border-gray-800 last:border-b-0 px-3 py-2">
-                <span className="rounded bg-gray-800 px-1.5 py-0.5 text-[11px] text-gray-400">{target.kind}</span>
-                <code className="min-w-0 flex-1 truncate text-xs text-gray-500">{target.path}</code>
-              </div>
-            ))}
-          </div>
-          <div className="flex items-center justify-end gap-2">
-            <button
-              onClick={() => setShowUnlinkConfirm(false)}
-              disabled={unlinking}
-              className="px-3 py-1.5 rounded-lg border border-gray-700 text-xs text-gray-400 hover:text-white hover:bg-[#222] disabled:opacity-50 transition"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleUnlinkConfirm}
-              disabled={unlinking}
-              className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-xs text-white disabled:opacity-50 transition"
-            >
-              {unlinking ? 'Unlinking...' : 'Confirm Unlink'}
-            </button>
-          </div>
-        </div>
-      </Modal>
+      <UnlinkConfirmModal
+        open={state.showUnlinkConfirm}
+        number={item.number}
+        outputs={outputs}
+        unlinkTargets={unlinkTargets}
+        unlinking={state.unlinking}
+        onCancel={() => dispatch({ type: 'hideUnlink' })}
+        onConfirm={handleUnlinkConfirm}
+      />
 
-      <Modal open={showBackConfirm} onClose={() => !backingToPending && setShowBackConfirm(false)} title={`Back ${item.number} to Pending`}>
-        <div className="space-y-4">
-          <p className="text-sm text-gray-400">
-            This removes the library record only. Source files stay in the input directory and will appear in Pending after scan.
-          </p>
-          <div className="rounded-lg border border-gray-800 bg-[#111] max-h-64 overflow-y-auto">
-            {outputs.map((output) => (
-              <div key={output.id} className="flex items-center gap-2 border-b border-gray-800 last:border-b-0 px-3 py-2">
-                <span className="rounded bg-gray-800 px-1.5 py-0.5 text-[11px] text-gray-400">{output.alive ? 'Link' : 'Missing'}</span>
-                <code className="min-w-0 flex-1 truncate text-xs text-gray-500">{output.linkPath}</code>
-              </div>
-            ))}
-          </div>
-          <div className="flex items-center justify-end gap-2">
-            <button
-              onClick={() => setShowBackConfirm(false)}
-              disabled={backingToPending}
-              className="px-3 py-1.5 rounded-lg border border-gray-700 text-xs text-gray-400 hover:text-white hover:bg-[#222] disabled:opacity-50 transition"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleBackConfirm}
-              disabled={backingToPending}
-              className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-xs text-white disabled:opacity-50 transition"
-            >
-              {backingToPending ? 'Moving...' : 'Back to Pending'}
-            </button>
-          </div>
-        </div>
-      </Modal>
+      <BackConfirmModal
+        open={state.showBackConfirm}
+        number={item.number}
+        outputs={outputs}
+        backing={state.backingToPending}
+        onCancel={() => dispatch({ type: 'hideBack' })}
+        onConfirm={handleBackConfirm}
+      />
     </div>
   )
 }
@@ -372,4 +371,79 @@ function buildUnlinkTargets(bangou: BangouResponse, outputs: BangouResponse['out
   if (bangou.coverPath) out.push({ kind: 'Cover', path: bangou.coverPath })
   if (bangou.rawPath) out.push({ kind: 'Raw', path: bangou.rawPath })
   return out
+}
+
+function UnlinkConfirmModal({ open, number, outputs, unlinkTargets, unlinking, onCancel, onConfirm }: {
+  open: boolean
+  number: string
+  outputs: BangouResponse['outputs']
+  unlinkTargets: UnlinkTarget[]
+  unlinking: boolean
+  onCancel: () => void
+  onConfirm: () => void
+}) {
+  return (
+    <Modal open={open} onClose={() => !unlinking && onCancel()} title={`Unlink ${number}`}>
+      <div className="space-y-4">
+        <p className="text-sm text-gray-400">
+          This will remove {outputs.length} linked file{outputs.length > 1 ? 's' : ''} and related sidecars.
+        </p>
+        <div className="rounded-lg border border-gray-800 bg-[#111] max-h-64 overflow-y-auto">
+          {unlinkTargets.map((target) => (
+            <div key={`${target.kind}-${target.path}`} className="flex items-center gap-2 border-b border-gray-800 last:border-b-0 px-3 py-2">
+              <span className="rounded bg-gray-800 px-1.5 py-0.5 text-[11px] text-gray-400">{target.kind}</span>
+              <code className="min-w-0 flex-1 truncate text-xs text-gray-500">{target.path}</code>
+            </div>
+          ))}
+        </div>
+        <div className="flex items-center justify-end gap-2">
+          <button type="button" onClick={onCancel} disabled={unlinking}
+            className="px-3 py-1.5 rounded-lg border border-gray-700 text-xs text-gray-400 hover:text-white hover:bg-[#222] disabled:opacity-50 transition">
+            Cancel
+          </button>
+          <button type="button" onClick={onConfirm} disabled={unlinking}
+            className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-xs text-white disabled:opacity-50 transition">
+            {unlinking ? 'Unlinking...' : 'Confirm Unlink'}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
+function BackConfirmModal({ open, number, outputs, backing, onCancel, onConfirm }: {
+  open: boolean
+  number: string
+  outputs: BangouResponse['outputs']
+  backing: boolean
+  onCancel: () => void
+  onConfirm: () => void
+}) {
+  return (
+    <Modal open={open} onClose={() => !backing && onCancel()} title={`Back ${number} to Pending`}>
+      <div className="space-y-4">
+        <p className="text-sm text-gray-400">
+          This removes the library record only. Source files stay in the input directory and will appear in Pending after scan.
+        </p>
+        <div className="rounded-lg border border-gray-800 bg-[#111] max-h-64 overflow-y-auto">
+          {outputs.map((output) => (
+            <div key={output.id} className="flex items-center gap-2 border-b border-gray-800 last:border-b-0 px-3 py-2">
+              <span className="rounded bg-gray-800 px-1.5 py-0.5 text-[11px] text-gray-400">{output.alive ? 'Link' : 'Missing'}</span>
+              <code className="min-w-0 flex-1 truncate text-xs text-gray-500">{output.linkPath}</code>
+            </div>
+          ))}
+        </div>
+        <div className="flex items-center justify-end gap-2">
+          <button type="button" onClick={onCancel} disabled={backing}
+            className="px-3 py-1.5 rounded-lg border border-gray-700 text-xs text-gray-400 hover:text-white hover:bg-[#222] disabled:opacity-50 transition">
+            Cancel
+          </button>
+          <button type="button" onClick={onConfirm} disabled={backing}
+            className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-xs text-white disabled:opacity-50 transition">
+            {backing ? 'Moving...' : 'Back to Pending'}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  )
 }

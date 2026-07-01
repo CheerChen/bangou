@@ -46,7 +46,6 @@ export interface CreatePipelineReq {
 
 export const listPipelines = () => request<PipelineResponse[]>('GET', '/pipelines')
 export const createPipeline = (data: CreatePipelineReq) => request<{ id: number }>('POST', '/pipelines', data)
-export const deletePipeline = (id: number) => request<unknown>('DELETE', `/pipelines/${id}`)
 
 // ── Groups ──
 
@@ -200,12 +199,6 @@ export const listLibrary = (pipelineId: number, page = 0, size = 12, sort = 'add
 
 export const libraryRescrape = (number: string) =>
   request<unknown>('POST', `/library/${number}/rescrape`, {})
-
-export const libraryApply = (number: string) =>
-  request<unknown>('POST', `/library/${number}/apply`, {})
-
-export const libraryDismiss = (number: string) =>
-  request<unknown>('POST', `/library/${number}/dismiss`, {})
 
 export const unlinkBangou = (bangouId: number) =>
   request<unknown>('POST', `/bangous/${bangouId}/unlink`, {})
