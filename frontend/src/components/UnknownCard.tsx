@@ -30,10 +30,10 @@ export default function UnknownCard({ file, pipelineId, onAction }: Props) {
       <div className="p-4 space-y-3 flex-1 flex flex-col">
         <div className="text-xs text-gray-500">Unable to parse a number from this filename.</div>
         <div className="flex items-center gap-2 mt-auto">
-          <input type="text" value={number} onChange={(e) => setNumber(e.target.value)} placeholder="e.g. SIVR-476"
+          <input type="text" value={number} onChange={(e) => setNumber(e.target.value)} placeholder="e.g. SIVR-476" aria-label="Bangou number"
             onKeyDown={(e) => e.key === 'Enter' && handleTag()}
             className="flex-1 px-3 py-1.5 bg-[#111] border border-gray-700 rounded-lg text-white text-sm placeholder-gray-700 focus:border-indigo-500 focus:outline-none" />
-          <button onClick={handleTag} className="flex items-center gap-1 text-xs px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition">
+          <button type="button" onClick={handleTag} className="flex items-center gap-1 text-xs px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition">
             <Tag size={12} />Tag
           </button>
         </div>

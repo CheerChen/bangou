@@ -78,7 +78,8 @@ export default function GroupCard({ group, pipelineId, onAction, selected, onSel
   return (
     <div className="bg-[#1a1a1a] border border-gray-800 rounded-xl overflow-hidden hover:border-gray-700 transition flex flex-col">
       {!isUnknownLike && meta?.coverURL ? (
-        <div className="relative aspect-[16/9] overflow-hidden bg-black group/cover cursor-pointer"
+        <button type="button" className="relative aspect-[16/9] overflow-hidden bg-black group/cover cursor-pointer block w-full"
+          aria-label={`Open gallery for ${group.number}`}
           onClick={() => lightbox.open(galleryItems, 0, imgRef.current || undefined)}>
           <img ref={imgRef} src={meta.coverURL} alt={`${group.number} cover`}
             className="w-full h-full object-cover opacity-90 group-hover/cover:scale-105 transition-transform duration-300 motion-reduce:transition-none motion-reduce:group-hover/cover:scale-100" />
@@ -109,7 +110,7 @@ export default function GroupCard({ group, pipelineId, onAction, selected, onSel
             </div>
             <StatusPill task={group.task} scrape={group.scrape.status} allReady={allReady} progress={group.taskProgress} />
           </div>
-        </div>
+        </button>
       ) : (
         <div className="relative aspect-[16/9] overflow-hidden bg-[#111] flex items-center justify-center">
           <HelpCircle size={48} className="text-gray-800" />
@@ -142,7 +143,7 @@ export default function GroupCard({ group, pipelineId, onAction, selected, onSel
 
         {isFailed && (
           <div>
-            <button onClick={() => setErrorsOpen(!errorsOpen)} className="flex items-center gap-1.5 text-xs text-amber-400 hover:text-amber-300 transition">
+            <button type="button" onClick={() => setErrorsOpen(!errorsOpen)} className="flex items-center gap-1.5 text-xs text-amber-400 hover:text-amber-300 transition">
               <AlertTriangle size={12} />Scrape failed
               {errorsOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
             </button>
@@ -152,9 +153,9 @@ export default function GroupCard({ group, pipelineId, onAction, selected, onSel
               </div>
             )}
             <div className="flex items-center gap-2 mt-2">
-              <input type="text" value={tagInput} onChange={(e) => setTagInput(e.target.value)} placeholder="Manual tag e.g. MDVR-336"
+              <input type="text" value={tagInput} onChange={(e) => setTagInput(e.target.value)} placeholder="Manual tag e.g. MDVR-336" aria-label="Manual tag"
                 className="flex-1 px-2.5 py-1.5 bg-[#111] border border-gray-700 rounded-lg text-white text-xs placeholder-gray-700 focus:border-indigo-500 focus:outline-none" />
-              <button onClick={handleTag} className="flex items-center gap-1 text-xs px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition">
+              <button type="button" onClick={handleTag} className="flex items-center gap-1 text-xs px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition">
                 <Tag size={11} />Tag
               </button>
             </div>
@@ -195,7 +196,7 @@ export default function GroupCard({ group, pipelineId, onAction, selected, onSel
         {actionError && (
           <div className="text-xs text-red-400 bg-red-500/10 px-3 py-2 rounded-lg">
             {actionError}
-            <button onClick={() => setActionError(null)} className="ml-2 text-red-300 hover:text-white">✕</button>
+            <button type="button" onClick={() => setActionError(null)} className="ml-2 text-red-300 hover:text-white">✕</button>
           </div>
         )}
 
@@ -204,17 +205,17 @@ export default function GroupCard({ group, pipelineId, onAction, selected, onSel
           <div className="flex gap-1.5">
             {!busy && (
               <>
-                <button onClick={handleRescrape} disabled={rescraping}
+                <button type="button" onClick={handleRescrape} disabled={rescraping}
                   className="flex items-center gap-1 text-xs px-2.5 py-1.5 text-gray-500 hover:text-white hover:bg-[#222] rounded-lg transition disabled:opacity-50">
                   {rescraping ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}Rescrape
                 </button>
                 {group.items.length > 1 && allReady && !groupHasMixedMkvMp4 && (
-                  <button onClick={handleMerge} className="flex items-center gap-1 text-xs px-2.5 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-lg transition">
+                  <button type="button" onClick={handleMerge} className="flex items-center gap-1 text-xs px-2.5 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-lg transition">
                     <Merge size={12} />Merge
                   </button>
                 )}
                 {canAct && (
-                  <button onClick={handleLink} disabled={!canLinkSelection}
+                  <button type="button" onClick={handleLink} disabled={!canLinkSelection}
                     className={`flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg transition ${
                       canLinkSelection ? 'bg-indigo-600 hover:bg-indigo-500 text-white' : 'bg-gray-800 text-gray-500 cursor-not-allowed'
                     }`}>

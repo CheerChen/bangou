@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useRef } from 'react'
+import { createContext, useCallback, use, useMemo, useRef } from 'react'
 import PhotoSwipeLightbox from 'photoswipe/lightbox'
 import 'photoswipe/style.css'
 
@@ -18,7 +18,7 @@ interface LightboxState {
 
 const LightboxContext = createContext<LightboxState>({ open: () => {} })
 
-export const useLightbox = () => useContext(LightboxContext)
+export const useLightbox = () => use(LightboxContext)
 
 interface ImageSize {
   width: number
@@ -63,16 +63,21 @@ function normalizeItems(images: LightboxSource[], sizeCache: Map<string, ImageSi
 
 export function LightboxProvider({ children }: { children: React.ReactNode }) {
   const pswpRef = useRef<PhotoSwipeLightbox | null>(null)
-  const sizeCacheRef = useRef(new Map<string, ImageSize>())
-  const probeRef = useRef(new Map<string, Promise<ImageSize>>())
+  // Lazy-init refs so the Maps are not rebuilt on every render.
+  const sizeCacheRef = useRef<Map<string, ImageSize> | null>(null)
+  if (sizeCacheRef.current === null) sizeCacheRef.current = new Map()
+  const probeRef = useRef<Map<string, Promise<ImageSize>> | null>(null)
+  if (probeRef.current === null) probeRef.current = new Map()
+  const sizeCache = sizeCacheRef.current
+  const probeCache = probeRef.current
 
   const probeImageSize = useCallback((src: string) => {
-    const cached = sizeCacheRef.current.get(src)
+    const cached = sizeCache.get(src)
     if (cached) {
       return Promise.resolve(cached)
     }
 
-    const pending = probeRef.current.get(src)
+    const pending = probeCache.get(src)
     if (pending) {
       return pending
     }
@@ -83,23 +88,23 @@ export function LightboxProvider({ children }: { children: React.ReactNode }) {
       img.onload = () => {
         const size = { width: img.naturalWidth, height: img.naturalHeight }
         if (size.width > 1 && size.height > 1) {
-          sizeCacheRef.current.set(src, size)
+          sizeCache.set(src, size)
           resolve(size)
         } else {
           reject(new Error(`Invalid image size for ${src}`))
         }
-        probeRef.current.delete(src)
+        probeCache.delete(src)
       }
       img.onerror = () => {
-        probeRef.current.delete(src)
+        probeCache.delete(src)
         reject(new Error(`Failed to load ${src}`))
       }
       img.src = src
     })
 
-    probeRef.current.set(src, probe)
+    probeCache.set(src, probe)
     return probe
-  }, [])
+  }, [sizeCache, probeCache])
 
   const open = useCallback((images: LightboxSource[], index = 0, thumbEl?: HTMLElement) => {
     if (pswpRef.current) {
@@ -107,7 +112,7 @@ export function LightboxProvider({ children }: { children: React.ReactNode }) {
       pswpRef.current = null
     }
 
-    const dataSource = normalizeItems(images, sizeCacheRef.current)
+    const dataSource = normalizeItems(images, sizeCache)
     if (dataSource.length === 0) {
       return
     }
@@ -117,7 +122,7 @@ export function LightboxProvider({ children }: { children: React.ReactNode }) {
     if (thumbSize && currentItem && currentItem.type !== 'video' && (currentItem.width <= 1 || currentItem.height <= 1)) {
       currentItem.width = thumbSize.width
       currentItem.height = thumbSize.height
-      sizeCacheRef.current.set(currentItem.src, thumbSize)
+      sizeCache.set(currentItem.src, thumbSize)
     }
     if (thumbEl instanceof HTMLImageElement && currentItem && !currentItem.msrc) {
       currentItem.msrc = thumbEl.currentSrc || thumbEl.src
@@ -236,7 +241,7 @@ export function LightboxProvider({ children }: { children: React.ReactNode }) {
         if (item) {
           item.width = el.naturalWidth
           item.height = el.naturalHeight
-          sizeCacheRef.current.set(item.src, { width: el.naturalWidth, height: el.naturalHeight })
+          sizeCache.set(item.src, { width: el.naturalWidth, height: el.naturalHeight })
         }
         slide.width = el.naturalWidth
         slide.height = el.naturalHeight
@@ -265,10 +270,12 @@ export function LightboxProvider({ children }: { children: React.ReactNode }) {
     lightbox.init()
     lightbox.loadAndOpen(index)
     pswpRef.current = lightbox
-  }, [probeImageSize])
+  }, [probeImageSize, sizeCache])
+
+  const contextValue = useMemo(() => ({ open }), [open])
 
   return (
-    <LightboxContext.Provider value={{ open }}>
+    <LightboxContext.Provider value={contextValue}>
       {children}
     </LightboxContext.Provider>
   )

@@ -19,27 +19,30 @@ export default function Home() {
   const navigate = useNavigate()
   const [showWizard, setShowWizard] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
-  const [dmmConfigured, setDmmConfigured] = useState(false)
-  const [aria2Configured, setAria2Configured] = useState(false)
+  const [providerStatus, setProviderStatus] = useState<{ dmm: boolean; aria2: boolean }>({ dmm: false, aria2: false })
 
   const fetcher = useCallback(() => listPipelines(), [])
   const { data: pipes, loading, refresh } = usePolling(fetcher, 5000)
 
   const loadProviderConfigs = useCallback(() => {
     listProviderConfigs().then((configs) => {
+      let dmm = false
+      let aria2 = false
       for (const c of configs) {
         try {
           const parsed = JSON.parse(c.config)
           if (c.provider === 'dmm') {
-            setDmmConfigured(!!(parsed.api_id && parsed.affiliate_id))
+            dmm = !!(parsed.api_id && parsed.affiliate_id)
           } else if (c.provider === 'aria2') {
-            setAria2Configured(!!(parsed.rpc_url))
+            aria2 = !!(parsed.rpc_url)
           }
         } catch { /* ignore */ }
       }
+      setProviderStatus({ dmm, aria2 })
     })
   }, [])
 
+  // react-doctor-disable-next-line react-doctor/no-derived-state -- providerStatus is loaded from an async API, not derived from props/state
   useEffect(() => { loadProviderConfigs() }, [loadProviderConfigs])
 
   const handleCreate = async (data: WizardData) => {
@@ -67,11 +70,11 @@ export default function Home() {
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-semibold text-white">Pipelines</h1>
         <div className="flex items-center gap-2">
-          <button onClick={() => setShowSettings(true)}
+          <button type="button" onClick={() => setShowSettings(true)}
             className="flex items-center gap-1.5 px-4 py-2 border border-gray-700 text-gray-400 hover:text-white text-sm rounded-lg transition">
             <Settings size={14} />Settings
           </button>
-          <button onClick={() => setShowWizard(true)}
+          <button type="button" onClick={() => setShowWizard(true)}
             className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm rounded-lg transition">
             <Plus size={14} />New Pipeline
           </button>
@@ -83,10 +86,9 @@ export default function Home() {
       ) : pipes && pipes.length > 0 ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {pipes.map((ps: PipelineResponse) => (
-            <div key={ps.id}
+            <button type="button" key={ps.id}
               onClick={() => navigate(`/pipelines/${ps.id}`)}
-              className="bg-[#1a1a1a] border border-gray-800 rounded-xl p-5 hover:border-gray-600 transition cursor-pointer group relative"
-            >
+              className="bg-[#1a1a1a] border border-gray-800 rounded-xl p-5 hover:border-gray-600 transition cursor-pointer group relative text-left w-full">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-lg font-medium text-white group-hover:text-indigo-400 transition">{ps.name}</h2>
                 <div className="flex items-center gap-2">
@@ -135,13 +137,13 @@ export default function Home() {
                 ))}
               </div>
 
-            </div>
+            </button>
           ))}
         </div>
       ) : (
         <div className="text-center py-12">
           <p className="text-gray-500 mb-4">No pipelines configured yet.</p>
-          <button onClick={() => setShowWizard(true)}
+          <button type="button" onClick={() => setShowWizard(true)}
             className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm rounded-lg transition">
             Create your first pipeline
           </button>
@@ -150,7 +152,7 @@ export default function Home() {
 
       <Modal open={showWizard} onClose={() => setShowWizard(false)} title="New Pipeline" wide>
         <PipelineWizard onComplete={handleCreate} onCancel={() => setShowWizard(false)}
-          dmmConfigured={dmmConfigured} aria2Configured={aria2Configured} />
+          dmmConfigured={providerStatus.dmm} aria2Configured={providerStatus.aria2} />
       </Modal>
 
       <GlobalSettings open={showSettings} onClose={() => setShowSettings(false)} onConfigChanged={loadProviderConfigs} />
