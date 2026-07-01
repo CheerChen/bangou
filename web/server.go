@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/CheerChen/bangou/committed"
+	"github.com/zeroAlcBeer/bangou/committed"
 )
 
 func NewServer(reg *Registry, store committed.Store) http.Handler {

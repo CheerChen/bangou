@@ -284,7 +284,7 @@ bangou/
 // staging/models.go
 package staging
 
-import "github.com/CheerChen/bangou/provider"
+import "github.com/zeroAlcBeer/bangou/provider"
 
 type StagingFile struct {
 	Path     string
@@ -328,7 +328,7 @@ package staging
 import (
 	"testing"
 
-	"github.com/CheerChen/bangou/parser"
+	"github.com/zeroAlcBeer/bangou/parser"
 )
 
 func TestIngestAndGroup(t *testing.T) {
@@ -417,7 +417,7 @@ package staging
 import (
 	"sync"
 
-	"github.com/CheerChen/bangou/parser"
+	"github.com/zeroAlcBeer/bangou/parser"
 )
 
 type Manager struct {
@@ -783,14 +783,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/CheerChen/bangou/checker"
-	"github.com/CheerChen/bangou/committed"
-	"github.com/CheerChen/bangou/config"
-	"github.com/CheerChen/bangou/executor"
-	"github.com/CheerChen/bangou/provider"
-	"github.com/CheerChen/bangou/scanner"
-	"github.com/CheerChen/bangou/staging"
-	"github.com/CheerChen/bangou/web"
+	"github.com/zeroAlcBeer/bangou/checker"
+	"github.com/zeroAlcBeer/bangou/committed"
+	"github.com/zeroAlcBeer/bangou/config"
+	"github.com/zeroAlcBeer/bangou/executor"
+	"github.com/zeroAlcBeer/bangou/provider"
+	"github.com/zeroAlcBeer/bangou/scanner"
+	"github.com/zeroAlcBeer/bangou/staging"
+	"github.com/zeroAlcBeer/bangou/web"
 )
 
 func main() {
@@ -919,10 +919,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/CheerChen/bangou/committed"
-	"github.com/CheerChen/bangou/nfo"
-	"github.com/CheerChen/bangou/provider"
-	"github.com/CheerChen/bangou/staging"
+	"github.com/zeroAlcBeer/bangou/committed"
+	"github.com/zeroAlcBeer/bangou/nfo"
+	"github.com/zeroAlcBeer/bangou/provider"
+	"github.com/zeroAlcBeer/bangou/staging"
 )
 
 type Executor struct {

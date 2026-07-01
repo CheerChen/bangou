@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/CheerChen/bangou/committed"
-	"github.com/CheerChen/bangou/provider"
-	"github.com/CheerChen/bangou/staging"
+	"github.com/zeroAlcBeer/bangou/committed"
+	"github.com/zeroAlcBeer/bangou/provider"
+	"github.com/zeroAlcBeer/bangou/staging"
 )
 
 func TestLinkFile(t *testing.T) {

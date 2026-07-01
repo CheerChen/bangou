@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/CheerChen/bangou/provider"
+	"github.com/zeroAlcBeer/bangou/provider"
 )
 
 func TestGenerate(t *testing.T) {

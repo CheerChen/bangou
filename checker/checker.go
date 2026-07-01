@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/CheerChen/bangou/committed"
-	"github.com/CheerChen/bangou/scanner"
+	"github.com/zeroAlcBeer/bangou/committed"
+	"github.com/zeroAlcBeer/bangou/scanner"
 )
 
 func CheckLink(path string) bool {

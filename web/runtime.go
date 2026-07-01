@@ -9,12 +9,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/CheerChen/bangou/committed"
-	"github.com/CheerChen/bangou/executor"
-	"github.com/CheerChen/bangou/parser"
-	"github.com/CheerChen/bangou/provider"
-	"github.com/CheerChen/bangou/scanner"
-	"github.com/CheerChen/bangou/staging"
+	"github.com/zeroAlcBeer/bangou/committed"
+	"github.com/zeroAlcBeer/bangou/executor"
+	"github.com/zeroAlcBeer/bangou/parser"
+	"github.com/zeroAlcBeer/bangou/provider"
+	"github.com/zeroAlcBeer/bangou/scanner"
+	"github.com/zeroAlcBeer/bangou/staging"
 )
 
 // PipelineRuntime holds per-pipeline state.

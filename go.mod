@@ -1,4 +1,4 @@
-module github.com/CheerChen/bangou
+module github.com/zeroAlcBeer/bangou
 
 go 1.24.0
 

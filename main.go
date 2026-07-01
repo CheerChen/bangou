@@ -9,10 +9,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/CheerChen/bangou/checker"
-	"github.com/CheerChen/bangou/committed"
-	"github.com/CheerChen/bangou/config"
-	"github.com/CheerChen/bangou/web"
+	"github.com/zeroAlcBeer/bangou/checker"
+	"github.com/zeroAlcBeer/bangou/committed"
+	"github.com/zeroAlcBeer/bangou/config"
+	"github.com/zeroAlcBeer/bangou/web"
 )
 
 func main() {

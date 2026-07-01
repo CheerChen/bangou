@@ -11,10 +11,10 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/CheerChen/bangou/checker"
-	"github.com/CheerChen/bangou/committed"
-	"github.com/CheerChen/bangou/provider"
-	"github.com/CheerChen/bangou/staging"
+	"github.com/zeroAlcBeer/bangou/checker"
+	"github.com/zeroAlcBeer/bangou/committed"
+	"github.com/zeroAlcBeer/bangou/provider"
+	"github.com/zeroAlcBeer/bangou/staging"
 )
 
 type Handlers struct {

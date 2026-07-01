@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/CheerChen/bangou/parser"
+	"github.com/zeroAlcBeer/bangou/parser"
 )
 
 type Manager struct {

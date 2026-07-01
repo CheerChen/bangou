@@ -1,8 +1,8 @@
 package staging
 
 import (
-	"github.com/CheerChen/bangou/provider"
-	"github.com/CheerChen/bangou/scanner"
+	"github.com/zeroAlcBeer/bangou/provider"
+	"github.com/zeroAlcBeer/bangou/scanner"
 )
 
 type StagingFile struct {

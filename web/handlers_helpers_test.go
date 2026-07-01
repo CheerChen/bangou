@@ -3,7 +3,7 @@ package web
 import (
 	"testing"
 
-	"github.com/CheerChen/bangou/staging"
+	"github.com/zeroAlcBeer/bangou/staging"
 )
 
 func TestValidateSingleExtensionPaths(t *testing.T) {

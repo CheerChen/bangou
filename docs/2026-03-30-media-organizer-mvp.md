@@ -77,7 +77,7 @@ bangou/              # New Go module (separate from dmm-scraper)
 
 ```bash
 mkdir -p bangou && cd bangou
-go mod init github.com/CheerChen/bangou
+go mod init github.com/zeroAlcBeer/bangou
 ```
 
 - [ ] **Step 2: Create config struct with CLI flags**
@@ -112,7 +112,7 @@ package main
 
 import (
 	"log"
-	"github.com/CheerChen/bangou/config"
+	"github.com/zeroAlcBeer/bangou/config"
 )
 
 func main() {
@@ -1134,10 +1134,10 @@ import (
 	"os"
 	"os/signal"
 
-	"github.com/CheerChen/bangou/config"
-	"github.com/CheerChen/bangou/parser"
-	"github.com/CheerChen/bangou/scanner"
-	"github.com/CheerChen/bangou/store"
+	"github.com/zeroAlcBeer/bangou/config"
+	"github.com/zeroAlcBeer/bangou/parser"
+	"github.com/zeroAlcBeer/bangou/scanner"
+	"github.com/zeroAlcBeer/bangou/store"
 )
 
 func main() {
@@ -1454,7 +1454,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/CheerChen/bangou/store"
+	"github.com/zeroAlcBeer/bangou/store"
 )
 
 type Executor struct {
@@ -1754,8 +1754,8 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/CheerChen/bangou/executor"
-	"github.com/CheerChen/bangou/store"
+	"github.com/zeroAlcBeer/bangou/executor"
+	"github.com/zeroAlcBeer/bangou/store"
 )
 
 type Handlers struct {
@@ -1885,8 +1885,8 @@ import (
 	"html/template"
 	"net/http"
 
-	"github.com/CheerChen/bangou/executor"
-	"github.com/CheerChen/bangou/store"
+	"github.com/zeroAlcBeer/bangou/executor"
+	"github.com/zeroAlcBeer/bangou/store"
 )
 
 //go:embed templates/*.html static/*
@@ -2060,7 +2060,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/CheerChen/bangou/store"
+	"github.com/zeroAlcBeer/bangou/store"
 )
 
 func CheckLink(path string) bool {
@@ -2136,13 +2136,13 @@ import (
 	"os/signal"
 	"time"
 
-	"github.com/CheerChen/bangou/checker"
-	"github.com/CheerChen/bangou/config"
-	"github.com/CheerChen/bangou/executor"
-	"github.com/CheerChen/bangou/parser"
-	"github.com/CheerChen/bangou/scanner"
-	"github.com/CheerChen/bangou/store"
-	"github.com/CheerChen/bangou/web"
+	"github.com/zeroAlcBeer/bangou/checker"
+	"github.com/zeroAlcBeer/bangou/config"
+	"github.com/zeroAlcBeer/bangou/executor"
+	"github.com/zeroAlcBeer/bangou/parser"
+	"github.com/zeroAlcBeer/bangou/scanner"
+	"github.com/zeroAlcBeer/bangou/store"
+	"github.com/zeroAlcBeer/bangou/web"
 )
 
 func main() {

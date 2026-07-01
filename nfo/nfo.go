@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/CheerChen/bangou/provider"
+	"github.com/zeroAlcBeer/bangou/provider"
 )
 
 type movie struct {

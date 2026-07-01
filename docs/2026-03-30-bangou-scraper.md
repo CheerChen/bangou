@@ -803,7 +803,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/CheerChen/bangou/provider"
+	"github.com/zeroAlcBeer/bangou/provider"
 )
 
 func TestGenerate(t *testing.T) {
@@ -862,7 +862,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/CheerChen/bangou/provider"
+	"github.com/zeroAlcBeer/bangou/provider"
 )
 
 type movie struct {
@@ -1092,8 +1092,8 @@ In `executor/executor.go`, add to both `doLink` and `doMerge` (after creating th
 ```go
 // Add import
 import (
-	"github.com/CheerChen/bangou/nfo"
-	"github.com/CheerChen/bangou/provider"
+	"github.com/zeroAlcBeer/bangou/nfo"
+	"github.com/zeroAlcBeer/bangou/provider"
 )
 
 // Add method to Executor

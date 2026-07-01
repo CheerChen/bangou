@@ -3,9 +3,9 @@ package web
 import (
 	"testing"
 
-	"github.com/CheerChen/bangou/committed"
-	"github.com/CheerChen/bangou/scanner"
-	"github.com/CheerChen/bangou/staging"
+	"github.com/zeroAlcBeer/bangou/committed"
+	"github.com/zeroAlcBeer/bangou/scanner"
+	"github.com/zeroAlcBeer/bangou/staging"
 )
 
 func TestDistributeDownloadProgressMatchesSinglePipelineByParsedIdentity(t *testing.T) {
