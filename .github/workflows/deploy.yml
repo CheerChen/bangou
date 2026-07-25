@@ -58,9 +58,13 @@ jobs:
           docker push "$REGISTRY/bangou-web:$SHA"
           docker push "$REGISTRY/bangou-web:latest"
       - name: Deploy stack
+        # The stack pins immutable SHA tags — rewrite them to this build's
+        # tag, then up. (compose.yaml is also Dockge-managed; only the tag
+        # is touched.) Images were built on this host, so no pull needed.
         run: |
+          SHA=${GITHUB_SHA::12}
           cd "$STACK_DIR"
-          sudo docker compose pull
+          sudo sed -i -E "s#(bangou-(api|web)):[A-Za-z0-9._-]+#\1:$SHA#" compose.yaml
           sudo docker compose up -d
       - name: Verify
         run: |
