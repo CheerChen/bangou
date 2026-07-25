@@ -1,24 +1,8 @@
-import { createContext, useCallback, use, useMemo, useRef } from 'react'
+import { useCallback, useMemo, useRef } from 'react'
 import PhotoSwipeLightbox from 'photoswipe/lightbox'
+import type PhotoSwipe from 'photoswipe'
 import 'photoswipe/style.css'
-
-export interface LightboxItem {
-  src: string
-  width?: number
-  height?: number
-  msrc?: string
-  type?: 'image' | 'video'
-}
-
-type LightboxSource = string | LightboxItem
-
-interface LightboxState {
-  open: (images: LightboxSource[], index?: number, thumbEl?: HTMLElement) => void
-}
-
-const LightboxContext = createContext<LightboxState>({ open: () => {} })
-
-export const useLightbox = () => use(LightboxContext)
+import { LightboxContext, type LightboxSource } from './useLightbox'
 
 interface ImageSize {
   width: number
@@ -31,6 +15,11 @@ interface NormalizedLightboxItem {
   width: number
   height: number
   msrc?: string
+}
+
+// pswp is assigned to the lightbox at runtime but absent from its typings.
+function getPswp(lightbox: PhotoSwipeLightbox): PhotoSwipe | undefined {
+  return (lightbox as unknown as { pswp?: PhotoSwipe }).pswp
 }
 
 function getThumbSize(thumbEl?: HTMLElement): ImageSize | null {
@@ -129,7 +118,7 @@ export function LightboxProvider({ children }: { children: React.ReactNode }) {
     }
 
     const lightbox = new PhotoSwipeLightbox({
-      dataSource: dataSource as any,
+      dataSource,
       index,
       pswpModule: () => import('photoswipe'),
       bgOpacity: 0.9,
@@ -143,20 +132,20 @@ export function LightboxProvider({ children }: { children: React.ReactNode }) {
 
     // Video content type support
     lightbox.addFilter('isContentLoading', (isLoading, content) => {
-      if ((content.data as any).type === 'video') {
+      if (content.data.type === 'video') {
         return false
       }
       return isLoading
     })
 
     lightbox.addFilter('useContentPlaceholder', (usePlaceholder, content) => {
-      if ((content.data as any).type === 'video') {
+      if (content.data.type === 'video') {
         return false
       }
       return usePlaceholder
     })
 
-    lightbox.on('contentLoad', (e: any) => {
+    lightbox.on('contentLoad', (e) => {
       const { content } = e
       if (content.data.type !== 'video') return
 
@@ -166,7 +155,7 @@ export function LightboxProvider({ children }: { children: React.ReactNode }) {
       container.style.cssText = 'display:flex;align-items:center;justify-content:center;width:100%;height:100%;'
 
       const iframe = document.createElement('iframe')
-      iframe.src = content.data.src
+      iframe.src = content.data.src || ''
       iframe.style.cssText = 'width:720px;height:480px;max-width:100%;max-height:100%;border:none;border-radius:8px;'
       iframe.setAttribute('allowfullscreen', '')
       iframe.setAttribute('allow', 'autoplay')
@@ -175,17 +164,18 @@ export function LightboxProvider({ children }: { children: React.ReactNode }) {
       content.element = container
     })
 
-    lightbox.on('contentActivate', (e: any) => {
+    lightbox.on('contentActivate', (e) => {
       if (e.content.data.type === 'video') {
         const iframe = e.content.element?.querySelector('iframe')
         if (iframe) {
           // Reload to trigger autoplay
-          iframe.src = iframe.src
+          const { src } = iframe
+          iframe.src = src
         }
       }
     })
 
-    lightbox.on('contentDeactivate', (e: any) => {
+    lightbox.on('contentDeactivate', (e) => {
       if (e.content.data.type === 'video') {
         const iframe = e.content.element?.querySelector('iframe')
         if (iframe) {
@@ -195,9 +185,9 @@ export function LightboxProvider({ children }: { children: React.ReactNode }) {
     })
 
     const syncSlideSize = (targetIndex: number) => {
-      const pswp = (lightbox as any).pswp
+      const pswp = getPswp(lightbox)
       const item = dataSource[targetIndex]
-      const holders = pswp?.mainScroll?.itemHolders as Array<{ slide?: any }> | undefined
+      const holders = pswp?.mainScroll?.itemHolders
       if (!item?.width || !item?.height || item.width <= 1 || item.height <= 1 || !holders) {
         return
       }
@@ -233,7 +223,7 @@ export function LightboxProvider({ children }: { children: React.ReactNode }) {
       })
     }
 
-    lightbox.on('loadComplete', (e: any) => {
+    lightbox.on('loadComplete', (e) => {
       const { content, slide } = e
       const el = content.element
       if (el instanceof HTMLImageElement && el.naturalWidth > 1 && el.naturalHeight > 1) {
@@ -256,7 +246,7 @@ export function LightboxProvider({ children }: { children: React.ReactNode }) {
     })
 
     lightbox.on('change', () => {
-      const pswp = (lightbox as any).pswp
+      const pswp = getPswp(lightbox)
       if (!pswp) {
         return
       }

@@ -2,7 +2,7 @@ import { useRef, useReducer } from 'react'
 import { ExternalLink, RefreshCw, Unlink, CheckCircle, AlertCircle, Layers, FileVideo, Link as LinkIcon, FileText, Image, Loader2, ChevronRight, Calendar, Users, Play, RotateCcw } from 'lucide-react'
 import * as api from '../api/client'
 import type { BangouResponse, BangouFileResponse } from '../api/client'
-import { useLightbox, type LightboxItem } from './Lightbox'
+import { useLightbox, type LightboxItem } from './useLightbox'
 import Modal from './Modal'
 import TagList from './TagList'
 
@@ -76,7 +76,7 @@ export default function LibraryCard({ item, onAction }: Props) {
 
   const handleRescrape = async () => {
     dispatch({ type: 'startRescrape' })
-    try { await api.libraryRescrape(item.number) } catch (e: any) { dispatch({ type: 'setError', error: e.message }) }
+    try { await api.libraryRescrape(item.number) } catch (e) { dispatch({ type: 'setError', error: api.errorMessage(e) }) }
     dispatch({ type: 'endRescrape' })
   }
   const handleUnlink = () => {
@@ -89,7 +89,7 @@ export default function LibraryCard({ item, onAction }: Props) {
       await api.unlinkBangou(item.id)
       dispatch({ type: 'hideUnlink' })
       onAction()
-    } catch (e: any) { dispatch({ type: 'setError', error: e.message }) }
+    } catch (e) { dispatch({ type: 'setError', error: api.errorMessage(e) }) }
     dispatch({ type: 'endUnlink' })
   }
   const handleRestore = async () => {
@@ -98,7 +98,7 @@ export default function LibraryCard({ item, onAction }: Props) {
     try {
       await api.restoreBangou(item.id)
       onAction()
-    } catch (e: any) { dispatch({ type: 'setError', error: e.message }) }
+    } catch (e) { dispatch({ type: 'setError', error: api.errorMessage(e) }) }
     dispatch({ type: 'endRestore' })
   }
   const handleBackConfirm = async () => {
@@ -107,26 +107,30 @@ export default function LibraryCard({ item, onAction }: Props) {
       await api.backToPendingBangou(item.id)
       dispatch({ type: 'hideBack' })
       onAction()
-    } catch (e: any) { dispatch({ type: 'setError', error: e.message }) }
+    } catch (e) { dispatch({ type: 'setError', error: api.errorMessage(e) }) }
     dispatch({ type: 'endBack' })
   }
   const hasVideo = !!item.sampleMovieURL
-  const galleryItems: LightboxItem[] = []
-  if (item.sampleMovieURL) {
-    galleryItems.push({ src: item.sampleMovieURL, type: 'video', width: 720, height: 480 })
-  }
-  if (item.coverURL) {
-    galleryItems.push({
-      src: item.coverURL,
-      width: imgRef.current?.naturalWidth || undefined,
-      height: imgRef.current?.naturalHeight || undefined,
-      msrc: imgRef.current?.currentSrc || undefined,
-    })
-  }
-  if (item.sampleImages) {
-    for (const src of item.sampleImages) {
-      if (src) galleryItems.push({ src })
+  // Built on click, not during render — reads the cover img ref.
+  const openGallery = () => {
+    const galleryItems: LightboxItem[] = []
+    if (item.sampleMovieURL) {
+      galleryItems.push({ src: item.sampleMovieURL, type: 'video', width: 720, height: 480 })
     }
+    if (item.coverURL) {
+      galleryItems.push({
+        src: item.coverURL,
+        width: imgRef.current?.naturalWidth || undefined,
+        height: imgRef.current?.naturalHeight || undefined,
+        msrc: imgRef.current?.currentSrc || undefined,
+      })
+    }
+    if (item.sampleImages) {
+      for (const src of item.sampleImages) {
+        if (src) galleryItems.push({ src })
+      }
+    }
+    lightbox.open(galleryItems, 0, imgRef.current || undefined)
   }
 
   const multiPart = outputs.length > 1
@@ -138,7 +142,7 @@ export default function LibraryCard({ item, onAction }: Props) {
       {item.coverURL && (
         <button type="button" className="relative aspect-[16/9] overflow-hidden bg-black group/cover cursor-pointer block w-full"
           aria-label={`Open gallery for ${item.number}`}
-          onClick={() => lightbox.open(galleryItems, 0, imgRef.current || undefined)}>
+          onClick={openGallery}>
           <img ref={imgRef} src={item.coverURL} alt={`${item.number} cover`}
             className="w-full h-full object-cover opacity-90 group-hover/cover:scale-105 transition-transform duration-300 motion-reduce:transition-none motion-reduce:group-hover/cover:scale-100" />
           <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent" />

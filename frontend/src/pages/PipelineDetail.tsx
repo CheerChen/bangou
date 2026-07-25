@@ -96,11 +96,13 @@ export default function PipelineDetail() {
     api.triggerScan(pipelineId).catch(() => {})
   }, [tab, pipelineId])
 
-  // Per-group selection state
+  // Per-group selection state, adjusted during render when new group data
+  // arrives (https://react.dev/learn/you-might-not-need-an-effect).
   const [selections, setSelections] = useState<Map<string, Set<string>>>(new Map())
+  const [syncedGroupsPage, setSyncedGroupsPage] = useState<GroupsPage | null>(null)
 
-  useEffect(() => {
-    if (!groupsPage) return
+  if (groupsPage && groupsPage !== syncedGroupsPage) {
+    setSyncedGroupsPage(groupsPage)
     setSelections(prev => {
       const next = new Map(prev)
       const currentNumbers = new Set(groupsPage.groups.map(g => g.number))
@@ -118,7 +120,7 @@ export default function PipelineDetail() {
       }
       return next
     })
-  }, [groupsPage])
+  }
 
   const handleSelectionChange = useCallback((number: string, selected: Set<string>) => {
     setSelections(prev => {

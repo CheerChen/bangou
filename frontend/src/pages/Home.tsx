@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Plus, Scan, Archive, Merge, Loader2, Settings } from 'lucide-react'
-import { listPipelines, listProviderConfigs, createPipeline } from '../api/client'
+import { listPipelines, listProviderConfigs, createPipeline, errorMessage } from '../api/client'
 import type { PipelineResponse, CreatePipelineReq } from '../api/client'
 import { usePolling } from '../api/usePolling'
 import Modal from '../components/Modal'
@@ -60,8 +60,8 @@ export default function Home() {
       await createPipeline(req)
       setShowWizard(false)
       refresh()
-    } catch (e: any) {
-      alert(e.message)
+    } catch (e) {
+      alert(errorMessage(e))
     }
   }
 

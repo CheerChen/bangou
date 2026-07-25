@@ -1,5 +1,10 @@
 const BASE = '/api'
 
+// errorMessage extracts a display message from an unknown catch value.
+export function errorMessage(e: unknown): string {
+  return e instanceof Error ? e.message : String(e)
+}
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const opts: RequestInit = {
     method,

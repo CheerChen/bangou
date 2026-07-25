@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { errorMessage } from './client'
 
 export function usePolling<T>(fetcher: () => Promise<T>, intervalMs = 3000) {
   const [data, setData] = useState<T | null>(null)
@@ -13,9 +14,9 @@ export function usePolling<T>(fetcher: () => Promise<T>, intervalMs = 3000) {
         setData(result)
         setError(null)
       }
-    } catch (e: any) {
+    } catch (e) {
       if (mountedRef.current) {
-        setError(e.message)
+        setError(errorMessage(e))
       }
     } finally {
       if (mountedRef.current) {
