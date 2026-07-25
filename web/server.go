@@ -7,9 +7,14 @@ import (
 	"github.com/zeroAlcBeer/bangou/committed"
 )
 
-func NewServer(reg *Registry, store committed.Store) http.Handler {
+func NewServer(reg *Registry, store committed.Store, buildSHA string) http.Handler {
 	h := &Handlers{registry: reg, store: store}
 	mux := http.NewServeMux()
+
+	// Health / deploy verification
+	mux.HandleFunc("GET /api/healthz", func(w http.ResponseWriter, r *http.Request) {
+		writeOK(w, map[string]string{"status": "ok", "sha": buildSHA})
+	})
 
 	// Pipelines
 	mux.HandleFunc("GET /api/pipelines", h.ListPipelines)

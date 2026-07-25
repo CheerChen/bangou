@@ -37,7 +37,7 @@ dev:
 	cd frontend && npm run dev
 
 docker-build:
-	DOCKER_BUILDKIT=1 docker build --platform $(PLATFORM) -t $(API_IMAGE) -f Dockerfile .
+	DOCKER_BUILDKIT=1 docker build --platform $(PLATFORM) --build-arg BUILD_SHA=$(RELEASE_SHA) -t $(API_IMAGE) -f Dockerfile .
 	DOCKER_BUILDKIT=1 docker build --platform $(PLATFORM) -t $(WEB_IMAGE) -f Dockerfile.frontend .
 
 docker-push:

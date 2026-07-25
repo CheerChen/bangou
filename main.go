@@ -15,6 +15,9 @@ import (
 	"github.com/zeroAlcBeer/bangou/web"
 )
 
+// buildSHA is injected at build time via -ldflags "-X main.buildSHA=<sha>".
+var buildSHA = "dev"
+
 func main() {
 	cfg := config.Parse()
 
@@ -49,7 +52,7 @@ func main() {
 	go checker.Run(ctx, db, time.Hour)
 
 	// Web server
-	srv := web.NewServer(reg, db)
+	srv := web.NewServer(reg, db, buildSHA)
 	go func() {
 		log.Printf("web ui: http://%s", cfg.ListenAddr)
 		if err := http.ListenAndServe(cfg.ListenAddr, srv); err != nil {

@@ -46,7 +46,7 @@ jobs:
       - name: Build images (native arm64)
         run: |
           SHA=${GITHUB_SHA::12}
-          docker build -f Dockerfile \
+          docker build -f Dockerfile --build-arg BUILD_SHA=$SHA \
             -t "$REGISTRY/bangou-api:$SHA" -t "$REGISTRY/bangou-api:latest" .
           docker build -f Dockerfile.frontend \
             -t "$REGISTRY/bangou-web:$SHA" -t "$REGISTRY/bangou-web:latest" .
@@ -69,11 +69,12 @@ jobs:
       - name: Verify
         run: |
           # Hits the web container, which proxies /api to the api container —
-          # a 200 here means both services are up.
+          # and checks the reported build SHA so a stale deploy can't pass.
+          SHA=${GITHUB_SHA::12}
           for i in $(seq 1 18); do
-            code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8890/api/pipelines || true)
-            if [ "$code" = "200" ]; then echo "healthy after $((i*5))s"; exit 0; fi
+            got=$(curl -s http://127.0.0.1:8890/api/healthz | jq -r .sha 2>/dev/null || true)
+            if [ "$got" = "$SHA" ]; then echo "healthy on $SHA after $((i*5))s"; exit 0; fi
             sleep 5
           done
-          echo "api never returned 200"
+          echo "expected sha $SHA, last seen: ${got:-none}"
           exit 1
