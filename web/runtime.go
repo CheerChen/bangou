@@ -42,6 +42,31 @@ type Registry struct {
 	runtimes map[int64]*PipelineRuntime
 	store    committed.Store
 	rootCtx  context.Context
+	taskWG   sync.WaitGroup
+}
+
+// TrackTask registers a long-running background task (e.g. a merge) so
+// shutdown can wait for it. Call before spawning the goroutine and defer
+// the returned release func inside it.
+func (reg *Registry) TrackTask() func() {
+	reg.taskWG.Add(1)
+	return func() { reg.taskWG.Done() }
+}
+
+// WaitTasks blocks until all tracked tasks finish or the timeout elapses.
+// Returns false on timeout.
+func (reg *Registry) WaitTasks(timeout time.Duration) bool {
+	done := make(chan struct{})
+	go func() {
+		reg.taskWG.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return true
+	case <-time.After(timeout):
+		return false
+	}
 }
 
 func NewRegistry(ctx context.Context, store committed.Store) *Registry {

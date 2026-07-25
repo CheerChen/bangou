@@ -338,7 +338,9 @@ func (h *Handlers) GroupMerge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rt.Manager.SetTask(number, "merging", "")
+	release := h.registry.TrackTask()
 	go func() {
+		defer release()
 		defer rt.mergeMu.Unlock()
 		if err := rt.Executor.Merge(context.Background(), number, req.Paths); err != nil {
 			log.Printf("[merge] %s: error: %v", number, err)

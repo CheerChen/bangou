@@ -13,6 +13,9 @@ services:
     command:
       - --db=/data/bangou.db
       - --listen=:8080
+    # Give in-flight mkvmerge merges time to finish on SIGTERM (the app
+    # waits up to 14m before exiting).
+    stop_grace_period: 15m
     restart: unless-stopped
 
   bangou-web:

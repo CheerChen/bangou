@@ -52,13 +52,32 @@ func main() {
 	go checker.Run(ctx, db, time.Hour)
 
 	// Web server
-	srv := web.NewServer(reg, db, buildSHA)
+	srv := &http.Server{Addr: cfg.ListenAddr, Handler: web.NewServer(reg, db, buildSHA)}
+	serveErr := make(chan error, 1)
 	go func() {
 		log.Printf("web ui: http://%s", cfg.ListenAddr)
-		if err := http.ListenAndServe(cfg.ListenAddr, srv); err != nil {
-			log.Fatalf("listen: %v", err)
-		}
+		serveErr <- srv.ListenAndServe()
 	}()
 
-	<-ctx.Done()
+	select {
+	case err := <-serveErr:
+		// Startup failure (e.g. port in use) — nothing is in flight yet.
+		log.Fatalf("listen: %v", err)
+	case <-ctx.Done():
+	}
+
+	// Graceful shutdown: drain HTTP, then wait for in-flight merges so
+	// mkvmerge is not killed mid-write. Requires a matching container
+	// stop_grace_period — see docker-compose.yml.sample.
+	log.Printf("shutdown: draining http")
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Printf("shutdown: http: %v", err)
+	}
+	log.Printf("shutdown: waiting for in-flight tasks")
+	if !reg.WaitTasks(14 * time.Minute) {
+		log.Printf("shutdown: warn: tasks still running at deadline, exiting anyway")
+	}
+	log.Printf("shutdown: done")
 }

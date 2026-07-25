@@ -25,7 +25,11 @@ func MergeFiles(parts []string, output string, totalSize int64, onProgress func(
 	if len(parts) < 2 {
 		return fmt.Errorf("need at least 2 parts to merge")
 	}
-	cmd := BuildMergeCommand(parts, output)
+	// Write to a .tmp path and rename on success — an interrupted merge never
+	// leaves a partial .mkv for the scanner to pick up (.tmp is not a video ext).
+	tmp := output + ".tmp"
+	_ = os.Remove(tmp)
+	cmd := BuildMergeCommand(parts, tmp)
 	var outputLog bytes.Buffer
 	cmd.Stdout = &outputLog
 	cmd.Stderr = &outputLog
@@ -36,7 +40,7 @@ func MergeFiles(parts []string, output string, totalSize int64, onProgress func(
 
 	done := make(chan struct{})
 	if onProgress != nil && totalSize > 0 {
-		go pollMergeProgress(output, totalSize, onProgress, done)
+		go pollMergeProgress(tmp, totalSize, onProgress, done)
 	}
 
 	err := cmd.Wait()
@@ -46,8 +50,12 @@ func MergeFiles(parts []string, output string, totalSize int64, onProgress func(
 		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
 			// warnings only, merge succeeded
 		} else {
+			_ = os.Remove(tmp)
 			return fmt.Errorf("mkvmerge failed: %w\n%s", err, outputLog.String())
 		}
+	}
+	if err := os.Rename(tmp, output); err != nil {
+		return fmt.Errorf("finalize merge output: %w", err)
 	}
 	if onProgress != nil {
 		onProgress(100)
