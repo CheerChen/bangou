@@ -22,7 +22,7 @@ help:
 	@echo "  make clean         - Remove build artifacts"
 
 test:
-	go test ./checker/ ./committed/ ./executor/ ./parser/ ./provider/ ./scanner/ ./staging/ ./store/ ./web/
+	go test ./...
 
 build:
 	go build -o bangou .
